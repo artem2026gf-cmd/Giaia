@@ -1,0 +1,1963 @@
+-- Lua | Visuals/Gui.lua | Roblox executor | Mario Hub GUI (visuals tab focused)
+-- require before Visuals modules. Builds window and exposes X.vsGui namespace.
+
+X = X or {}
+X.vsGui = X.vsGui or {}
+
+local cl = {
+    bg=Color3.fromRGB(18,18,22),
+    pn=Color3.fromRGB(26,26,32),
+    ln=Color3.fromRGB(46,46,56),
+    dm=Color3.fromRGB(140,140,150),
+    tx=Color3.fromRGB(230,230,238),
+    ht=Color3.fromRGB(255,255,255),
+    ac=Color3.fromRGB(255,120,30),
+    ag=Color3.fromRGB(255,170,90),
+    on=Color3.fromRGB(90,220,130),
+    of=Color3.fromRGB(60,60,72),
+    wn=Color3.fromRGB(255,190,80),
+    dn=Color3.fromRGB(230,90,100),
+    sf=Color3.fromRGB(34,34,42),
+}
+X.vsPalette = cl
+
+local function mk(class,parent,props)
+    local item = Instance.new(class)
+    for k,v in pairs(props) do item[k]=v end
+    item.Parent = parent
+    return item
+end
+X.vsMk = mk
+
+local function glass(frame,radius)
+    mk("UICorner",frame,{CornerRadius=UDim.new(0,radius or 8)})
+    local s = mk("UIStroke",frame,{Color=cl.ln,Thickness=1,Transparency=0.15,
+        ApplyStrokeMode=Enum.ApplyStrokeMode.Border})
+    return s
+end
+X.vsGlass = glass
+
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local CoreGui = game:GetService("CoreGui")
+
+-- ScreenGui host
+local host = nil
+pcall(function() host = gethui() end)
+if not host then host = CoreGui end
+
+local screen = mk("ScreenGui",host,{
+    Name="MarioHubVisuals",
+    ResetOnSpawn=false,
+    IgnoreGuiInset=true,
+    ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
+    DisplayOrder=1000,
+})
+X.vsScreen = screen
+
+-- Window
+local W,H = 880,540
+local win = mk("Frame",screen,{
+    Name="MarioWindow",
+    Size=UDim2.fromOffset(W,H),
+    Position=UDim2.new(0.5,0,0.5,0),
+    AnchorPoint=Vector2.new(0.5,0.5),
+    BackgroundColor3=cl.bg,
+    BorderSizePixel=0,
+    ClipsDescendants=true,
+})
+glass(win,10)
+X.vsWindow = win
+X.vsWindowSize = Vector2.new(W,H)
+
+-- Header
+local head = mk("Frame",win,{
+    Size=UDim2.new(1,0,0,42),
+    BackgroundColor3=Color3.fromRGB(14,14,18),
+    BorderSizePixel=0,
+})
+mk("Frame",head,{
+    Size=UDim2.new(1,-24,0,1),
+    Position=UDim2.new(0,12,1,-1),
+    BackgroundColor3=cl.ln,
+    BorderSizePixel=0,
+})
+local title = mk("TextLabel",head,{
+    Size=UDim2.fromOffset(300,42),
+    Position=UDim2.fromOffset(46,0),
+    BackgroundTransparency=1,
+    Font=Enum.Font.GothamBold,
+    TextSize=18,
+    TextColor3=cl.tx,
+    Text="Mario Hub",
+    TextXAlignment=Enum.TextXAlignment.Left,
+    Text="Mario Hub",
+})
+mk("Frame",head,{
+    Size=UDim2.fromOffset(8,8),
+    Position=UDim2.fromOffset(22,17),
+    BackgroundColor3=cl.ac,
+    BorderSizePixel=0,
+}).Parent = head
+mk("UICorner",head:FindFirstChildOfClass("Frame") or head,{CornerRadius=UDim.new(1,0)})
+
+-- Window buttons
+local function winBtn(glyph,x)
+    local b = mk("TextButton",head,{
+        Size=UDim2.fromOffset(30,42),
+        Position=UDim2.new(1,x,0,0),
+        BackgroundTransparency=1,
+        Text=glyph,
+        Font=Enum.Font.GothamBold,
+        TextSize=15,
+        TextColor3=cl.dm,
+        AutoButtonColor=false,
+    })
+    b.MouseEnter:Connect(function() b.TextColor3=cl.ht end)
+    b.MouseLeave:Connect(function() b.TextColor3=cl.dm end)
+    return b
+end
+local btnMin = winBtn("_",-72)
+local btnMax = winBtn("+",-42)
+local btnClose = winBtn("x",-12)
+btnClose.MouseButton1Click:Connect(function() win.Visible=false end)
+btnMax.MouseButton1Click:Connect(function()
+    win.AnchorPoint=Vector2.new(0.5,0.5)
+    win.Position=UDim2.fromScale(0.5,0.5)
+end)
+
+-- Drag
+do
+    local dragging, startPos, startOff = false, nil, nil
+    head.InputBegan:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1
+            or inp.UserInputType==Enum.UserInputType.Touch then
+            dragging=true
+            startPos = Vector2.new(inp.Position.X, inp.Position.Y)
+            startOff = win.Position
+        end
+    end)
+    game:GetService("UserInputService").InputChanged:Connect(function(inp)
+        if not dragging then return end
+        if inp.UserInputType~=Enum.UserInputType.MouseMovement
+            and inp.UserInputType~=Enum.UserInputType.Touch then return end
+        local cur = Vector2.new(inp.Position.X, inp.Position.Y)
+        local delta = cur - startPos
+        win.Position = UDim2.new(
+            startOff.X.Scale, startOff.X.Offset + delta.X,
+            startOff.Y.Scale, startOff.Y.Offset + delta.Y)
+    end)
+    game:GetService("UserInputService").InputEnded:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1
+            or inp.UserInputType==Enum.UserInputType.Touch then
+            dragging=false
+        end
+    end)
+end
+
+-- Sidebar
+local SIDE_W = 190
+local sidebar = mk("Frame",win,{
+    Size=UDim2.fromOffset(SIDE_W,H-42),
+    Position=UDim2.fromOffset(0,42),
+    BackgroundColor3=Color3.fromRGB(14,14,18),
+    BorderSizePixel=0,
+})
+X.vsSidebar = sidebar
+
+local tabHost = mk("ScrollingFrame",sidebar,{
+    Size=UDim2.new(1,-12,1,-12),
+    Position=UDim2.fromOffset(6,6),
+    BackgroundTransparency=1,
+    BorderSizePixel=0,
+    ScrollBarThickness=3,
+    ScrollBarImageColor3=cl.ac,
+    CanvasSize=UDim2.new(),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y,
+    ScrollingDirection=Enum.ScrollingDirection.Y,
+})
+mk("UIListLayout",tabHost,{Padding=UDim.new(0,4),SortOrder=Enum.SortOrder.LayoutOrder})
+
+-- Content
+local CONT_X = SIDE_W + 8
+local content = mk("Frame",win,{
+    Size=UDim2.new(1,-CONT_X-8,H-42-16),
+    Position=UDim2.fromOffset(CONT_X,42+8),
+    BackgroundColor3=cl.pn,
+    BorderSizePixel=0,
+})
+glass(content,8)
+X.vsContent = content
+
+-- Title row
+local paneTitle = mk("TextLabel",content,{
+    Size=UDim2.new(1,-24,0,26),
+    Position=UDim2.fromOffset(12,6),
+    BackgroundTransparency=1,
+    Font=Enum.Font.GothamBold,
+    TextSize=16,
+    TextColor3=cl.tx,
+    TextXAlignment=Enum.TextXAlignment.Left,
+    Text="Visuals",
+})
+X.vsPaneTitle = paneTitle
+
+-- Scroll host for rows
+local rowHost = mk("ScrollingFrame",content,{
+    Size=UDim2.new(1,-16,1,-46),
+    Position=UDim2.fromOffset(8,38),
+    BackgroundTransparency=1,
+    BorderSizePixel=0,
+    ScrollBarThickness=3,
+    ScrollBarImageColor3=cl.ac,
+    CanvasSize=UDim2.new(),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y,
+    ScrollingDirection=Enum.ScrollingDirection.Y,
+})
+mk("UIListLayout",rowHost,{Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder})
+X.vsRowHost = rowHost
+
+-- Hints
+local hintBar = mk("TextLabel",content,{
+    Size=UDim2.new(1,-24,0,20),
+    Position=UDim2.new(0,12,1,-24),
+    BackgroundTransparency=1,
+    Font=Enum.Font.Gotham,
+    TextSize=11,
+    TextColor3=cl.dm,
+    TextXAlignment=Enum.TextXAlignment.Left,
+    Text="",
+})
+X.vsHint = hintBar
+function X.vsSetHint(text)
+    hintBar.Text = text or ""
+end
+
+-- Tab registry
+X.vsTabs = {}
+local tabOrder = 0
+
+function X.vsBuildTabs(names)
+    for _,child in ipairs(tabHost:GetChildren()) do
+        if child:IsA("GuiObject") then child:Destroy() end
+    end
+    X.vsTabs = {}
+    for _,name in ipairs(names) do
+        tabOrder = tabOrder + 1
+        local b = mk("TextButton",tabHost,{
+            Size=UDim2.new(1,0,0,32),
+            BackgroundColor3=cl.ac,
+            BackgroundTransparency=1,
+            BorderSizePixel=0,
+            Text="",
+            AutoButtonColor=false,
+            LayoutOrder=tabOrder,
+        })
+        mk("UICorner",b,{CornerRadius=UDim.new(0,6)})
+        local lbl = mk("TextLabel",b,{
+            Size=UDim2.new(1,-16,1,0),
+            Position=UDim2.fromOffset(14,0),
+            BackgroundTransparency=1,
+            Font=Enum.Font.GothamMedium,
+            TextSize=13,
+            TextColor3=cl.tx,
+            TextXAlignment=Enum.TextXAlignment.Left,
+            Text="> "..name,
+        })
+        local entry = {id=name, button=b, label=lbl}
+        X.vsTabs[name] = entry
+        b.MouseButton1Click:Connect(function()
+            if X.vsOpenTab then X.vsOpenTab(name) end
+        end)
+        b.MouseEnter:Connect(function()
+            if X.vsActiveTab~=name then
+                b.BackgroundColor3=cl.sf
+                b.BackgroundTransparency=0
+            end
+        end)
+        b.MouseLeave:Connect(function()
+            if X.vsActiveTab~=name then
+                b.BackgroundTransparency=1
+            end
+        end)
+        function entry.set(active)
+            b.BackgroundTransparency = active and 0.15 or 1
+            b.BackgroundColor3 = cl.ac
+            lbl.TextColor3 = active and cl.ht or cl.tx
+        end
+        entry.set(false)
+    end
+end
+
+function X.vsClearRows()
+    for _,child in ipairs(rowHost:GetChildren()) do
+        if not child:IsA("UIListLayout") then child:Destroy() end
+    end
+end
+
+function X.vsOpenTab(name)
+    X.vsActiveTab = name
+    for id,entry in pairs(X.vsTabs) do entry.set(id==name) end
+    X.vsClearRows()
+    if X.vsTabBuilders[name] then
+        X.vsTabBuilders[name](rowHost)
+    end
+    paneTitle.Text = name
+end
+
+X.vsTabBuilders = X.vsTabBuilders or {}
+
+-- Bind clipboard hint
+function X.vsLog(msg)
+    warn("[Visuals] "..tostring(msg))
+end
+-- Lua | Visuals/PlayerEsp.lua | depends on X.vsGui from part 1
+
+local cl = X.vsPalette
+local mk = X.vsMk
+
+-- Ensure defaults for visual-only flags (independent of 3.5 f.* namespace)
+X.vsOpt = X.vsOpt or {}
+local o = X.vsOpt
+
+local defaults = {
+    esp_enabled=false,
+    esp_box=false, esp_box_style="corner", esp_box_thick=1, esp_box_scale=1.16,
+    esp_box_corner=0.3, esp_box_fill=1, esp_box_fade=true, esp_max=400,
+    esp_chams=false, esp_chams_depth=true, esp_chams_fill=0.8, esp_chams_out=0.04,
+    esp_name=false, esp_dist=false, esp_health=false, esp_health_num=false,
+    esp_chip=false, esp_text_size=12, esp_weapon=false, esp_shots=false,
+    esp_head=false, esp_snap=false, esp_skel=false, esp_skel_vis=false,
+    esp_team=false, esp_target=false,
+    esp_target_col="yellow", esp_enemy_col="red", esp_ally_col="cyan",
+    esp_name_col="white", esp_detail_col="white",
+    esp_invul_col="purple",
+    esp_rgb=false, esp_rgb_force=false,
+    esp_partvis=false,
+    esp_seg_col="lime",
+}
+for k,v in pairs(defaults) do if o[k]==nil then o[k]=v end end
+
+local function row(parent, order, key)
+    local r = mk("Frame",parent,{
+        Size=UDim2.new(1,0,0,34),
+        BackgroundColor3=cl.sf,
+        BackgroundTransparency=0.55,
+        BorderSizePixel=0,
+        LayoutOrder=order,
+    })
+    mk("UICorner",r,{CornerRadius=UDim.new(0,5)})
+    r.MouseEnter:Connect(function()
+        r.BackgroundTransparency=0.18
+        X.vsSetHint("option: "..key)
+    end)
+    r.MouseLeave:Connect(function()
+        r.BackgroundTransparency=0.55
+        X.vsSetHint(nil)
+    end)
+    return r
+end
+
+local function label(r, text)
+    return mk("TextLabel",r,{
+        Size=UDim2.fromOffset(200,34),
+        Position=UDim2.fromOffset(12,0),
+        BackgroundTransparency=1,
+        Font=Enum.Font.Gotham,
+        TextSize=13,
+        TextColor3=cl.tx,
+        TextXAlignment=Enum.TextXAlignment.Left,
+        Text=text,
+    })
+end
+
+local function checkbox(r, key, order)
+    local pill = mk("Frame",r,{
+        Size=UDim2.fromOffset(92,24),
+        Position=UDim2.new(1,-100,0.5,-12),
+        BackgroundColor3=cl.of,
+        BackgroundTransparency=0.3,
+        BorderSizePixel=0,
+        ZIndex=2,
+    })
+    mk("UICorner",pill,{CornerRadius=UDim.new(1,0)})
+    local state = mk("TextLabel",pill,{
+        Size=UDim2.new(1,-28,1,0),
+        Position=UDim2.fromOffset(25,0),
+        BackgroundTransparency=1,
+        Font=Enum.Font.GothamBold,
+        TextSize=10,
+        TextColor3=cl.dm,
+        Text="OFF",
+    })
+    local knob = mk("Frame",pill,{
+        Size=UDim2.fromOffset(18,18),
+        Position=UDim2.fromOffset(3,3),
+        BackgroundColor3=cl.ht,
+        BorderSizePixel=0,
+        ZIndex=3,
+    })
+    mk("UICorner",knob,{CornerRadius=UDim.new(1,0)})
+    local click = mk("TextButton",pill,{
+        Size=UDim2.fromScale(1,1),
+        BackgroundTransparency=1,
+        Text="",
+        AutoButtonColor=false,
+        ZIndex=4,
+    })
+    local function refresh()
+        local on = o[key]==true
+        pill.BackgroundColor3 = on and cl.ac or cl.of
+        pill.BackgroundTransparency = on and 0.05 or 0.3
+        knob.Position = UDim2.fromOffset(on and 71 or 3, 3)
+        state.Text = on and "ON" or "OFF"
+        state.Position = UDim2.fromOffset(on and 5 or 25, 0)
+        state.TextColor3 = on and cl.ht or cl.dm
+    end
+    click.MouseButton1Click:Connect(function()
+        o[key] = not o[key]
+        refresh()
+        if X.vsEspRebuild then X.vsEspRebuild() end
+    end)
+    refresh()
+    return pill
+end
+
+local function slider(r, key, minV, maxV, step, order, unit)
+    local track = mk("Frame",r,{
+        Size=UDim2.new(1,-300,0,6),
+        Position=UDim2.fromOffset(206,14),
+        BackgroundColor3=cl.bg,
+        BackgroundTransparency=0.25,
+        BorderSizePixel=0,
+    })
+    mk("UICorner",track,{CornerRadius=UDim.new(1,0)})
+    local fill = mk("Frame",track,{
+        Size=UDim2.fromScale(0,1),
+        BackgroundColor3=cl.ac,
+        BorderSizePixel=0,
+    })
+    mk("UICorner",fill,{CornerRadius=UDim.new(1,0)})
+    local knob = mk("Frame",track,{
+        Size=UDim2.fromOffset(14,14),
+        AnchorPoint=Vector2.new(0.5,0.5),
+        Position=UDim2.new(0,0,0.5,0),
+        BackgroundColor3=cl.ht,
+        BorderSizePixel=0,
+        ZIndex=2,
+    })
+    mk("UICorner",knob,{CornerRadius=UDim.new(1,0)})
+    local value = mk("TextLabel",r,{
+        Size=UDim2.fromOffset(72,34),
+        Position=UDim2.new(1,-88,0,0),
+        BackgroundTransparency=1,
+        Font=Enum.Font.GothamBold,
+        TextSize=13,
+        TextColor3=cl.ag,
+        TextXAlignment=Enum.TextXAlignment.Right,
+        Text="",
+    })
+    local function place()
+        local v = tonumber(o[key]) or minV
+        local a = math.clamp((v-minV)/math.max(maxV-minV,1e-6),0,1)
+        fill.Size = UDim2.fromScale(a,1)
+        knob.Position = UDim2.new(a,0,0.5,0)
+        local text
+        if step>=1 then text = string.format("%d",v)
+        elseif step>=0.1 then text = string.format("%.1f",v)
+        else text = string.format("%.2f",v) end
+        value.Text = text..(unit or "")
+    end
+    local drag = mk("TextButton",r,{
+        Size=UDim2.new(1,-288,0,26),
+        Position=UDim2.fromOffset(198,4),
+        BackgroundTransparency=1,
+        Text="",
+        AutoButtonColor=false,
+    })
+    local dragging=false
+    local function setFromX(x)
+        local left = track.AbsolutePosition.X
+        local width = math.max(track.AbsoluteSize.X,1)
+        local a = math.clamp((x-left)/width,0,1)
+        local raw = minV + a*(maxV-minV)
+        local snapped = minV + math.floor((raw-minV)/step+0.5)*step
+        snapped = math.clamp(snapped,minV,maxV)
+        o[key] = snapped
+        place()
+        if X.vsEspRebuild then X.vsEspRebuild() end
+    end
+    drag.InputBegan:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1
+            or inp.UserInputType==Enum.UserInputType.Touch then
+            dragging=true
+            setFromX(inp.Position.X)
+        end
+    end)
+    game:GetService("UserInputService").InputChanged:Connect(function(inp)
+        if dragging and inp.UserInputType==Enum.UserInputType.MouseMovement then
+            setFromX(inp.Position.X)
+        end
+    end)
+    game:GetService("UserInputService").InputEnded:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1 then dragging=false end
+    end)
+    place()
+    return track
+end
+
+local function dropdown(r, key, options, order)
+    local chip = mk("TextButton",r,{
+        Size=UDim2.fromOffset(124,24),
+        Position=UDim2.new(1,-156,0.5,-12),
+        BackgroundColor3=cl.bg,
+        BackgroundTransparency=0.35,
+        BorderSizePixel=0,
+        Text="",
+        AutoButtonColor=false,
+    })
+    mk("UICorner",chip,{CornerRadius=UDim.new(0,7)})
+    local lbl = mk("TextLabel",chip,{
+        Size=UDim2.fromScale(1,1),
+        BackgroundTransparency=1,
+        Font=Enum.Font.Gotham,
+        TextSize=11,
+        TextColor3=cl.ag,
+        Text=tostring(o[key] or options[1]),
+    })
+    local open=false
+    local popup
+    local function close()
+        if popup then popup:Destroy() popup=nil end
+        open=false
+    end
+    chip.MouseButton1Click:Connect(function()
+        if open then close() return end
+        open=true
+        local pos = chip.AbsolutePosition
+        local size = chip.AbsoluteSize
+        popup = mk("Frame",X.vsScreen,{
+            Size=UDim2.fromOffset(160, math.min(#options*24+8, 260)),
+            Position=UDim2.fromOffset(pos.X, pos.Y+size.Y+4),
+            BackgroundColor3=cl.pn,
+            BorderSizePixel=0,
+            ZIndex=50,
+        })
+        X.vsGlass(popup,8)
+        local list = mk("ScrollingFrame",popup,{
+            Size=UDim2.new(1,-8,1,-8),
+            Position=UDim2.fromOffset(4,4),
+            BackgroundTransparency=1,
+            BorderSizePixel=0,
+            ScrollBarThickness=3,
+            CanvasSize=UDim2.new(),
+            AutomaticCanvasSize=Enum.AutomaticSize.Y,
+        })
+        mk("UIListLayout",list,{Padding=UDim.new(0,2)})
+        for _,opt in ipairs(options) do
+            local b = mk("TextButton",list,{
+                Size=UDim2.new(1,-4,0,22),
+                BackgroundColor3=(o[key]==opt) and cl.ac or cl.sf,
+                BackgroundTransparency=0.2,
+                BorderSizePixel=0,
+                Text=tostring(opt),
+                Font=Enum.Font.Gotham,
+                TextSize=11,
+                TextColor3=(o[key]==opt) and cl.ht or cl.tx,
+                AutoButtonColor=false,
+            })
+            mk("UICorner",b,{CornerRadius=UDim.new(0,4)})
+            b.MouseButton1Click:Connect(function()
+                o[key]=opt
+                lbl.Text=tostring(opt)
+                close()
+                if X.vsEspRebuild then X.vsEspRebuild() end
+            end)
+        end
+    end)
+    return chip
+end
+
+-- expose helpers
+X.vsRow = row
+X.vsLabel = label
+X.vsCheckbox = checkbox
+X.vsSlider = slider
+X.vsDropdown = dropdown
+
+-- BUILDER for the Visuals tab — Player ESP section
+X.vsTabBuilders["Visuals"] = function(parent)
+    local order = 0
+    local function nextOrder() order = order + 1 return order end
+
+    -- section header
+    local function section(title)
+        local h = mk("Frame",parent,{
+            Size=UDim2.new(1,0,0,22),
+            BackgroundTransparency=1,
+            LayoutOrder=nextOrder(),
+        })
+        mk("TextLabel",h,{
+            Size=UDim2.new(1,-8,1,0),
+            Position=UDim2.fromOffset(4,0),
+            BackgroundTransparency=1,
+            Font=Enum.Font.GothamBold,
+            TextSize=12,
+            TextColor3=cl.ac,
+            TextXAlignment=Enum.TextXAlignment.Left,
+            Text=string.upper(title),
+        })
+        return h
+    end
+
+    local function boolRow(key, text)
+        local r = row(parent, nextOrder(), key)
+        label(r, text)
+        checkbox(r, key)
+        return r
+    end
+
+    local function numRow(key, text, minV, maxV, step, unit)
+        local r = row(parent, nextOrder(), key)
+        label(r, text)
+        slider(r, key, minV, maxV, step, 0, unit)
+        return r
+    end
+
+    local function listRow(key, text, options)
+        local r = row(parent, nextOrder(), key)
+        label(r, text)
+        dropdown(r, key, options)
+        return r
+    end
+
+    section("Master")
+    boolRow("esp_enabled", "Player ESP enabled")
+    boolRow("esp_team", "Show teammates")
+    boolRow("esp_partvis", "Segment visibility colours")
+
+    section("Box")
+    boolRow("esp_box", "Draw boxes")
+    listRow("esp_box_style", "Style", {"corner","full"})
+    numRow("esp_box_thick", "Thickness (px)", 1, 6, 1, "px")
+    numRow("esp_box_scale", "Scale", 1, 1.5, 0.01, "x")
+    numRow("esp_box_corner", "Corner length", 0.05, 0.5, 0.01, "")
+    numRow("esp_box_fill", "Fill opacity", 0, 1, 0.05, "")
+    boolRow("esp_box_fade", "Distance fade")
+    numRow("esp_max", "Max distance", 50, 1000, 10, "st")
+
+    section("Chams")
+    boolRow("esp_chams", "Highlight")
+    boolRow("esp_chams_depth", "Always on top")
+    numRow("esp_chams_fill", "Fill transparency", 0, 1, 0.02, "")
+    numRow("esp_chams_out", "Outline transparency", 0, 1, 0.02, "")
+
+    section("Labels")
+    boolRow("esp_name", "Name")
+    boolRow("esp_dist", "Distance")
+    boolRow("esp_health", "Health bar")
+    boolRow("esp_health_num", "Exact HP")
+    boolRow("esp_chip", "Name plate")
+    boolRow("esp_weapon", "Weapon + ammo")
+    boolRow("esp_shots", "Shots to kill")
+    numRow("esp_text_size", "Text size", 8, 18, 1, "")
+
+    section("Overlays")
+    boolRow("esp_head", "Head dot")
+    boolRow("esp_snap", "Snapline")
+    boolRow("esp_skel", "Skeleton")
+    boolRow("esp_skel_vis", "Skeleton visibility colours")
+    boolRow("esp_target", "Mark current target")
+
+    section("Colours")
+    listRow("esp_enemy_col", "Enemy", {"red","orange","yellow","pink","magenta"})
+    listRow("esp_ally_col", "Ally", {"cyan","green","blue","white"})
+    listRow("esp_target_col", "Target", {"yellow","orange","white","pink"})
+    listRow("esp_name_col", "Name", {"white","yellow","green"})
+    listRow("esp_detail_col", "Detail", {"white","gray","cyan"})
+    listRow("esp_invul_col", "Invulnerable", {"purple","magenta","pink"})
+    boolRow("esp_rgb", "RGB cycle")
+    boolRow("esp_rgb_force", "Force RGB override")
+end
+
+X.vsLog("part 2 loaded (player esp rows)")
+-- Lua | Visuals/EspRuntime.lua | depends on part 1+2
+
+local cl = X.vsPalette
+local mk = X.vsMk
+local o = X.vsOpt
+
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local palette = {
+    red=Color3.fromRGB(230,60,60),
+    orange=Color3.fromRGB(240,140,60),
+    yellow=Color3.fromRGB(255,215,80),
+    pink=Color3.fromRGB(255,120,200),
+    magenta=Color3.fromRGB(255,60,220),
+    cyan=Color3.fromRGB(80,220,240),
+    green=Color3.fromRGB(90,220,120),
+    blue=Color3.fromRGB(90,150,240),
+    white=Color3.fromRGB(255,255,255),
+    gray=Color3.fromRGB(160,160,170),
+    lime=Color3.fromRGB(180,255,80),
+    purple=Color3.fromRGB(180,90,240),
+}
+local function col(name) return palette[name] or palette.white end
+
+-- ESP layer
+local layer = mk("Frame",X.vsScreen,{
+    Size=UDim2.fromScale(1,1),
+    BackgroundTransparency=1,
+    ZIndex=2,
+})
+X.vsEspLayer = layer
+
+local _ec = {}  -- [player] = {box=..., edges=..., chams=..., billboard=..., ...}
+X.vsEspEntries = _ec
+
+local BONES_R15 = {
+    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
+    {"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
+    {"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
+    {"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
+    {"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
+}
+
+-- Chams host
+local chamsHost = mk("Folder",workspace,{Name="MarioVisualsChams"})
+X.vsChamsHost = chamsHost
+
+local function createEntry(player, character)
+    local box = mk("Frame",layer,{
+        BackgroundTransparency=1,
+        BorderSizePixel=0,
+        Visible=false,
+        ZIndex=3,
+        AnchorPoint=Vector2.new(0.5,0.5),
+    })
+    local fill = mk("Frame",box,{
+        Size=UDim2.fromScale(1,1),
+        BackgroundTransparency=1,
+        BorderSizePixel=0,
+        ZIndex=2,
+    })
+    local edges = {}
+    for i=1,8 do
+        edges[i] = mk("Frame",box,{
+            BackgroundColor3=palette.red,
+            BorderSizePixel=0,
+            ZIndex=3,
+        })
+        mk("UIStroke",edges[i],{
+            Color=Color3.new(0,0,0),
+            Thickness=1,
+            Transparency=0.35,
+            ApplyStrokeMode=Enum.ApplyStrokeMode.Border,
+        })
+    end
+
+    local bb = mk("Frame",layer,{
+        Size=UDim2.fromOffset(1,1),
+        BackgroundTransparency=1,
+        Visible=false,
+        ZIndex=5,
+        AnchorPoint=Vector2.new(0.5,0.5),
+    })
+    local name = mk("TextLabel",bb,{
+        AnchorPoint=Vector2.new(0.5,1),
+        Position=UDim2.new(0.5,0,0,-2),
+        Size=UDim2.fromOffset(180,16),
+        BackgroundTransparency=1,
+        Font=Enum.Font.Code,
+        TextSize=o.esp_text_size,
+        TextColor3=col(o.esp_name_col),
+        TextStrokeTransparency=0.2,
+        Text="",
+    })
+    local dist = mk("TextLabel",bb,{
+        AnchorPoint=Vector2.new(0.5,0),
+        Size=UDim2.fromOffset(180,13),
+        BackgroundTransparency=1,
+        Font=Enum.Font.Code,
+        TextSize=o.esp_text_size-2,
+        TextColor3=col(o.esp_detail_col),
+        TextStrokeTransparency=0.2,
+        Text="",
+    })
+    local chip = mk("Frame",bb,{
+        Size=UDim2.fromOffset(120,20),
+        Position=UDim2.new(0.5,0,0,-20),
+        BackgroundColor3=Color3.fromRGB(12,12,16),
+        BackgroundTransparency=0.5,
+        BorderSizePixel=0,
+        Visible=false,
+        ZIndex=4,
+        AnchorPoint=Vector2.new(0.5,1),
+    })
+    mk("UICorner",chip,{CornerRadius=UDim.new(0,6)})
+
+    local hpBack = mk("Frame",bb,{
+        Size=UDim2.fromOffset(4,1),
+        AnchorPoint=Vector2.new(1,0),
+        Position=UDim2.fromOffset(-4,0),
+        BackgroundColor3=Color3.fromRGB(4,4,4),
+        BackgroundTransparency=0.1,
+        BorderSizePixel=0,
+        Visible=false,
+        ZIndex=5,
+    })
+    local hp = mk("Frame",hpBack,{
+        Size=UDim2.new(0,2,1,0),
+        AnchorPoint=Vector2.new(0.5,1),
+        Position=UDim2.new(0.5,0,1,0),
+        BackgroundColor3=palette.green,
+        BorderSizePixel=0,
+    })
+
+    local head = mk("Frame",layer,{
+        Size=UDim2.fromOffset(6,6),
+        AnchorPoint=Vector2.new(0.5,0.5),
+        BackgroundColor3=palette.white,
+        BorderSizePixel=0,
+        Visible=false,
+        ZIndex=5,
+    })
+    mk("UICorner",head,{CornerRadius=UDim.new(1,0)})
+
+    local snap = nil
+    local bones = {}
+    local bonesVis = {}
+
+    local chams = mk("Highlight",chamsHost,{
+        Name="MvChams",
+        Enabled=false,
+        DepthMode=o.esp_chams_depth and Enum.HighlightDepthMode.AlwaysOnTop
+            or Enum.HighlightDepthMode.Occluded,
+    })
+
+    return {
+        player=player, character=character,
+        box=box, fill=fill, edges=edges,
+        bb=bb, name=name, dist=dist, chip=chip,
+        hpBack=hpBack, hp=hp,
+        head=head, snap=snap, bones=bones, bonesVis=bonesVis,
+        chams=chams,
+    }
+end
+
+local function destroyEntry(entry)
+    if not entry then return end
+    if entry.box then entry.box:Destroy() end
+    if entry.bb then entry.bb:Destroy() end
+    if entry.head then entry.head:Destroy() end
+    if entry.chams then entry.chams:Destroy() end
+end
+
+local function project(pos)
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local p, on = cam:WorldToViewportPoint(pos)
+    return Vector2.new(p.X, p.Y), on and p.Z>0, p.Z
+end
+
+local function espScreenBounds(character, root)
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local head = character:FindFirstChild("Head")
+    if not head then return nil end
+    local bottomY = root.Position.Y - math.max(root.Size.Y*1.45, 2.7)
+    for _,name in ipairs({"LeftFoot","RightFoot","LeftLowerLeg","RightLowerLeg"}) do
+        local part = character:FindFirstChild(name)
+        if part then bottomY = math.min(bottomY, part.Position.Y - part.Size.Y*0.5) end
+    end
+    local topWorld = head.Position + Vector3.new(0, head.Size.Y*0.55+0.12, 0)
+    local bottomWorld = Vector3.new(root.Position.X, bottomY, root.Position.Z)
+    local top, topOn, topZ = project(topWorld)
+    local bottom, botOn, botZ = project(bottomWorld)
+    if not top or not bottom or topZ<=0.05 or botZ<=0.05 then return nil end
+    local topY, bottomY2 = math.min(top.Y,bottom.Y), math.max(top.Y,bottom.Y)
+    local height = bottomY2 - topY
+    if height < 7 then return nil end
+    local centerX = (top.X + bottom.X)*0.5
+    local width = height * 0.46
+    local torso = character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+    if torso then
+        local span = math.max(torso.Size.X*0.68, 0.85)
+        local l, _, lZ = project(torso.Position - cam.CFrame.RightVector*span)
+        local r, _, rZ = project(torso.Position + cam.CFrame.RightVector*span)
+        if l and r and lZ>0 and rZ>0 then
+            width = math.max(width, math.abs(r.X - l.X))
+        end
+    end
+    local scale = math.clamp(o.esp_box_scale, 1, 1.5)
+    local pad = height*(scale-1)*0.5
+    topY = topY - pad
+    bottomY2 = bottomY2 + pad
+    height = height * scale
+    width = math.clamp(width*scale, 6, math.max(6, height*0.78))
+    local left, right = centerX-width*0.5, centerX+width*0.5
+    local vp = cam.ViewportSize
+    local onScreen = right>=0 and left<=vp.X and bottomY2>=0 and topY<=vp.Y
+    return left, topY, right, bottomY2, onScreen
+end
+
+local function applyChams(entry, enabled)
+    if not entry.chams then return end
+    if not enabled then
+        if entry.chams.Enabled then entry.chams.Enabled=false end
+        return
+    end
+    entry.chams.Adornee = entry.character
+    local c = col(o.esp_enemy_col)
+    if entry.chams.FillColor ~= c then
+        entry.chams.FillColor = c
+        entry.chams.OutlineColor = c
+    end
+    entry.chams.FillTransparency = math.clamp(o.esp_chams_fill, 0, 1)
+    entry.chams.OutlineTransparency = math.clamp(o.esp_chams_out, 0, 1)
+    entry.chams.DepthMode = o.esp_chams_depth and Enum.HighlightDepthMode.AlwaysOnTop
+        or Enum.HighlightDepthMode.Occluded
+    if not entry.chams.Enabled then entry.chams.Enabled = true end
+end
+
+local function isEnemy(pl)
+    local myTeam = LP:GetAttribute("Team")
+    if myTeam and pl:GetAttribute("Team") == myTeam then return false end
+    return true
+end
+
+local function healthFraction(character, humanoid)
+    local h = tonumber(character:GetAttribute("Health")) or (humanoid and humanoid.Health) or 100
+    local m = tonumber(character:GetAttribute("MaxHealth")) or 100
+    return math.clamp(h/m, 0, 1)
+end
+
+local function drawBones(entry, color, useVis)
+    local character = entry.character
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local used = 0
+    for _,pair in ipairs(BONES_R15) do
+        local a = character:FindFirstChild(pair[1])
+        local b = character:FindFirstChild(pair[2])
+        if a and b then
+            local pa, va, za = project(a.Position)
+            local pb, vb, zb = project(b.Position)
+            if pa and pb and va and vb and za>0 and zb>0 then
+                used = used + 1
+                local line = entry.bones[used]
+                if not line then
+                    line = mk("Frame",layer,{
+                        BackgroundColor3=color,
+                        BorderSizePixel=0,
+                        AnchorPoint=Vector2.new(0.5,0.5),
+                        ZIndex=4,
+                    })
+                    entry.bones[used] = line
+                end
+                local delta = pb - pa
+                line.Size = UDim2.fromOffset(math.max(delta.Magnitude,1), 1.5)
+                line.Position = UDim2.fromOffset((pa.X+pb.X)*0.5, (pa.Y+pb.Y)*0.5)
+                line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+                line.BackgroundColor3 = color
+                line.Visible = true
+            end
+        end
+    end
+    for i=used+1,#entry.bones do entry.bones[i].Visible=false end
+end
+
+local function drawEntry(entry)
+    local character = entry.character
+    local root = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid or humanoid.Health<=0 then return end
+
+    local bounds = espScreenBounds(character, root)
+    if not bounds then
+        if entry.box then entry.box.Visible=false end
+        if entry.bb then entry.bb.Visible=false end
+        if entry.head then entry.head.Visible=false end
+        return
+    end
+    local left, topY, right, bottomY2, onScreen = bounds
+    if not onScreen then
+        entry.box.Visible = false
+        entry.bb.Visible = false
+        entry.head.Visible = false
+        return
+    end
+
+    local width = math.max(math.floor(right-left+0.5), 6)
+    local height = math.max(math.floor(bottomY2-topY+0.5), 8)
+    local cx, cy = (left+right)*0.5, (topY+bottomY2)*0.5
+
+    -- Box
+    if o.esp_box then
+        entry.box.Visible = true
+        entry.box.Position = UDim2.fromOffset(cx, cy)
+        entry.box.Size = UDim2.fromOffset(width, height)
+        local colr = col(o.esp_enemy_col)
+        for _,edge in ipairs(entry.edges) do
+            edge.BackgroundColor3 = colr
+        end
+        local weight = math.max(math.floor(o.esp_box_thick),1)
+        local corner = o.esp_box_style=="corner"
+        local arm = corner and math.max(width*math.clamp(o.esp_box_corner,0.05,0.5),4) or 0
+        for idx,edge in ipairs(entry.edges) do
+            local horizontal = idx<=4
+            local length = horizontal and ((arm>0) and arm or width)
+                or ((arm>0) and arm or height)
+            if horizontal then
+                edge.Size = UDim2.fromOffset(length, weight)
+                edge.Position = UDim2.fromOffset(
+                    (idx%2==1) and 0 or (width-length),
+                    (idx<=2) and 0 or (height-weight))
+            else
+                edge.Size = UDim2.fromOffset(weight, length)
+                edge.Position = UDim2.fromOffset(
+                    (idx%2==1) and 0 or (width-weight),
+                    (idx<=6) and 0 or (height-length))
+            end
+        end
+        entry.fill.BackgroundTransparency = math.clamp(o.esp_box_fill,0,1)
+        entry.fill.BackgroundColor3 = colr
+        entry.fill.Visible = o.esp_box_fill < 1
+    else
+        entry.box.Visible = false
+    end
+
+    -- Billboard
+    entry.bb.Visible = true
+    entry.bb.Position = UDim2.fromOffset(cx, cy)
+    entry.bb.Size = UDim2.fromOffset(width, height)
+
+    -- Name
+    entry.name.Visible = o.esp_name
+    entry.name.Text = entry.player.DisplayName or entry.player.Name
+    entry.name.TextSize = o.esp_text_size
+    entry.name.TextColor3 = col(o.esp_name_col)
+    entry.chip.Visible = o.esp_chip and o.esp_name
+
+    -- Distance
+    entry.dist.Visible = o.esp_dist
+    entry.dist.Position = UDim2.new(0.5,0,1,-2)
+    entry.dist.TextSize = math.max(o.esp_text_size-2,8)
+    local dist = (root.Position - workspace.CurrentCamera.CFrame.Position).Magnitude
+    local text = string.format("%.0fm", dist/3)
+    if o.esp_health_num then
+        text = text..string.format("   %d hp", math.floor((tonumber(character:GetAttribute("Health")) or humanoid.Health)))
+    end
+    entry.dist.Text = text
+    entry.dist.TextColor3 = col(o.esp_detail_col)
+
+    -- Health
+    entry.hpBack.Visible = o.esp_health
+    if o.esp_health then
+        entry.hpBack.Size = UDim2.fromOffset(4, height)
+        local f = healthFraction(character, humanoid)
+        entry.hp.Size = UDim2.new(0,2,f,0)
+        entry.hp.BackgroundColor3 = Color3.fromRGB(255*(1-f), 255*f, 0)
+    end
+
+    -- Head dot
+    if o.esp_head then
+        local hp2, ok, z = project(character.Head and character.Head.Position or root.Position)
+        if hp2 and ok and z>0 then
+            local size = math.clamp(90/z, 3, 14)
+            entry.head.Size = UDim2.fromOffset(size, size)
+            entry.head.Position = UDim2.fromOffset(hp2.X, hp2.Y)
+            entry.head.Visible = true
+        else
+            entry.head.Visible = false
+        end
+    else
+        entry.head.Visible = false
+    end
+
+    -- Snapline
+    if o.esp_snap then
+        local origin = Vector2.new(workspace.CurrentCamera.ViewportSize.X*0.5,
+            workspace.CurrentCamera.ViewportSize.Y)
+        local target = Vector2.new(cx, bottomY2)
+        local delta = target - origin
+        if not entry.snap then
+            entry.snap = mk("Frame",layer,{
+                BackgroundColor3=col(o.esp_enemy_col),
+                BorderSizePixel=0,
+                AnchorPoint=Vector2.new(0.5,0.5),
+                ZIndex=3,
+            })
+        end
+        entry.snap.Size = UDim2.fromOffset(math.max(delta.Magnitude,1), 1)
+        entry.snap.Position = UDim2.fromOffset((origin.X+target.X)*0.5, (origin.Y+target.Y)*0.5)
+        entry.snap.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+        entry.snap.BackgroundColor3 = col(o.esp_enemy_col)
+        entry.snap.Visible = true
+    elseif entry.snap then
+        entry.snap.Visible = false
+    end
+
+    -- Skeleton
+    if o.esp_skel then
+        drawBones(entry, col(o.esp_enemy_col), o.esp_skel_vis)
+    else
+        for _,line in ipairs(entry.bones) do line.Visible=false end
+    end
+end
+
+X.vsEspRebuild = function()
+    -- called when any option changes; existing entries just re-read o.* on next frame
+end
+
+-- per-frame step
+local function stepEsp()
+    if not o.esp_enabled then
+        for _,entry in pairs(_ec) do
+            if entry.box then entry.box.Visible=false end
+            if entry.bb then entry.bb.Visible=false end
+            if entry.head then entry.head.Visible=false end
+            if entry.chams then entry.chams.Enabled=false end
+            for _,l in ipairs(entry.bones) do l.Visible=false end
+        end
+        return
+    end
+
+    -- prune
+    for p,entry in pairs(_ec) do
+        if not p.Parent or not p.Character then
+            destroyEntry(entry)
+            _ec[p]=nil
+        end
+    end
+
+    for _,player in ipairs(Players:GetPlayers()) do
+        if player~=LP and player.Character then
+            local enemy = isEnemy(player)
+            if enemy or o.esp_team then
+                local entry = _ec[player]
+                if not entry or entry.character~=player.Character then
+                    destroyEntry(entry)
+                    entry = createEntry(player, player.Character)
+                    _ec[player] = entry
+                end
+                entry.character = player.Character
+                -- chams
+                applyChams(entry, o.esp_chams and enemy)
+                -- box/labels
+                drawEntry(entry)
+                -- color by enemy/ally
+                local c = enemy and col(o.esp_enemy_col) or col(o.esp_ally_col)
+                entry.name.TextColor3 = enemy and col(o.esp_name_col) or col(o.esp_ally_col)
+                if o.esp_chams and entry.chams then
+                    entry.chams.FillColor = c
+                    entry.chams.OutlineColor = c
+                end
+            else
+                local entry = _ec[player]
+                if entry then
+                    entry.box.Visible=false
+                    entry.bb.Visible=false
+                    entry.head.Visible=false
+                    if entry.chams then entry.chams.Enabled=false end
+                    for _,l in ipairs(entry.bones) do l.Visible=false end
+                end
+            end
+        end
+    end
+end
+
+X.vsStepEsp = stepEsp
+X.vsLog("part 3 loaded (esp runtime + chams)")
+-- Lua | Visuals/Effects.lua | tracers + hit feedback + kill fx
+
+local cl = X.vsPalette
+local mk = X.vsMk
+local o = X.vsOpt
+local LP = game:GetService("Players").LocalPlayer
+
+-- defaults
+local d = {
+    tracer_enabled=false, tracer_color="green", tracer_thick=2,
+    tracer_life=0.35, tracer_style="Classic", tracer_glow=3,
+    tracer_muzzle_offset=1.8,
+    hit_enabled=false, hit_color="cyan", hit_size=9, hit_style="X",
+    hit_anim="Fade", hit_life=0.18,
+    damage_num=false, damage_num_color="yellow", damage_num_life=0.9,
+    kill_enabled=false, kill_color="orange", kill_scale=6, kill_life=0.5,
+    kill_ring=false, kill_pillar=false, kill_pillar_h=1200,
+    kill_shards=false, kill_shards_n=8,
+    kill_shake=false,
+}
+for k,v in pairs(d) do if o[k]==nil then o[k]=v end end
+
+local palette = {
+    red=Color3.fromRGB(230,60,60), orange=Color3.fromRGB(240,140,60),
+    yellow=Color3.fromRGB(255,215,80), pink=Color3.fromRGB(255,120,200),
+    cyan=Color3.fromRGB(80,220,240), green=Color3.fromRGB(90,220,120),
+    blue=Color3.fromRGB(90,150,240), white=Color3.fromRGB(255,255,255),
+    lime=Color3.fromRGB(180,255,80), magenta=Color3.fromRGB(255,60,220),
+}
+local function col(n) return palette[n] or palette.white end
+
+-- layer for tracers and markers
+local fxLayer = mk("Frame",X.vsScreen,{
+    Size=UDim2.fromScale(1,1), BackgroundTransparency=1, ZIndex=4,
+})
+X.vsFxLayer = fxLayer
+
+-- FX world host
+local fxWorld = mk("Folder",workspace,{Name="MarioFxWorld"})
+X.vsFxWorld = fxWorld
+
+local linePool, lineUsed = {}, {}
+local function lineGet(z)
+    local f = table.remove(linePool)
+    if not f then
+        f = mk("Frame",fxLayer,{ BackgroundColor3=palette.white, BorderSizePixel=0,
+            AnchorPoint=Vector2.new(0.5,0.5), ZIndex=z or 3 })
+    end
+    f.Visible = true
+    f.ZIndex = z or 3
+    lineUsed[#lineUsed+1] = f
+    return f
+end
+local function lineDraw(f, a, b, thick, color, transparency)
+    local delta = b - a
+    f.Size = UDim2.fromOffset(math.max(delta.Magnitude,1), thick or 2)
+    f.Position = UDim2.fromOffset((a.X+b.X)*0.5, (a.Y+b.Y)*0.5)
+    f.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+    f.BackgroundColor3 = color
+    f.BackgroundTransparency = transparency or 0
+end
+local function linePoolFlush()
+    for i=#lineUsed,1,-1 do
+        local f = lineUsed[i]
+        f.Visible = false
+        f.Parent = nil
+        if #linePool < 96 then linePool[#linePool+1] = f end
+        lineUsed[i] = nil
+    end
+end
+
+-- tracer state
+local tracers = {}
+local function spawnTracer(from, to, life)
+    local frame = lineGet(3)
+    tracers[#tracers+1] = {frame=frame, a=from, b=to, born=tick(), life=life}
+end
+
+-- hook muzzle + impact → draw tracer
+-- reuse existing X.captureResolvedShot from part 25 or our own:
+local function project(pos)
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local p, on = cam:WorldToViewportPoint(pos)
+    return Vector2.new(p.X, p.Y), on and p.Z>0, p.Z
+end
+
+local function stepTracers()
+    for i=#tracers,1,-1 do
+        local t = tracers[i]
+        local age = (tick()-t.born)/math.max(t.life,0.05)
+        if age>=1 then
+            t.frame.Visible = false
+            t.frame.Parent = nil
+            if #linePool < 96 then linePool[#linePool+1] = t.frame end
+            tracers[i] = nil
+        else
+            local a, av, _ = project(t.a)
+            local b, bv, _ = project(t.b)
+            if a and b and av and bv then
+                local c = col(o.tracer_color)
+                if o.tracer_style == "Classic" then
+                    lineDraw(t.frame, a, b, o.tracer_thick, c, age)
+                elseif o.tracer_style == "Dual core" then
+                    local outer = lineGet(2)
+                    lineDraw(outer, a, b, o.tracer_thick*o.tracer_glow, c, 0.7+age*0.3)
+                    lineDraw(t.frame, a, b, o.tracer_thick, Color3.new(1,1,1), age)
+                elseif o.tracer_style == "Pulse" then
+                    local pulse = (math.sin(tick()*o.tracer_glow)+1)*0.5
+                    lineDraw(t.frame, a, b, o.tracer_thick*(0.8+pulse*0.55), c, age)
+                else
+                    lineDraw(t.frame, a, b, o.tracer_thick, c, age)
+                end
+            else
+                t.frame.Visible = false
+            end
+        end
+    end
+end
+
+-- markers
+local markers = {}
+local function pushMarker(worldPos, kind)
+    local label = mk("TextLabel",fxLayer,{
+        Size=UDim2.fromOffset(60,20),
+        BackgroundTransparency=1,
+        Font=Enum.Font.GothamBold,
+        TextSize=16,
+        TextColor3=col(o.hit_color),
+        Text = kind=="kill" and "KILL" or "HIT",
+        TextStrokeTransparency=0.3,
+        AnchorPoint=Vector2.new(0.5,0.5),
+        ZIndex=6,
+    })
+    markers[#markers+1] = {
+        label=label, at=worldPos, born=tick(),
+        life=kind=="kill" and 0.6 or o.hit_life,
+    }
+end
+local function stepMarkers()
+    for i=#markers,1,-1 do
+        local m = markers[i]
+        local age = (tick()-m.born)/math.max(m.life,0.05)
+        if age>=1 then
+            m.label:Destroy()
+            markers[i] = nil
+        else
+            local p, v, z = project(m.at)
+            if p and v and z>0 then
+                local s = math.clamp(90/z,4,20)
+                m.label.Size = UDim2.fromOffset(s*3, s)
+                m.label.TextSize = math.floor(s*2.2)
+                m.label.Position = UDim2.fromOffset(p.X, p.Y)
+                m.label.TextTransparency = age
+                m.label.Visible = true
+            else
+                m.label.Visible = false
+            end
+        end
+    end
+end
+
+-- damage numbers
+local numbers = {}
+function X.vsNumber(text, worldPos, color)
+    local lbl = mk("TextLabel",fxLayer,{
+        Size=UDim2.fromOffset(70,18),
+        BackgroundTransparency=1,
+        Font=Enum.Font.GothamBold,
+        TextSize=14,
+        TextColor3=color or col(o.damage_num_color),
+        Text = tostring(text),
+        TextStrokeTransparency=0.3,
+        AnchorPoint=Vector2.new(0.5,0.5),
+        ZIndex=7,
+    })
+    numbers[#numbers+1] = {label=lbl, at=worldPos, born=tick()}
+end
+local function stepNumbers()
+    for i=#numbers,1,-1 do
+        local n = numbers[i]
+        local age = (tick()-n.born)/o.damage_num_life
+        if age>=1 then
+            n.label:Destroy()
+            numbers[i] = nil
+        else
+            local p, v, z = project(n.at + Vector3.new(0, age*3, 0))
+            if p and v and z>0 then
+                n.label.Position = UDim2.fromOffset(p.X, p.Y)
+                n.label.TextTransparency = age
+                n.label.Visible = true
+            else
+                n.label.Visible = false
+            end
+        end
+    end
+end
+
+-- kill FX: world parts
+local fxLive = {}
+local fxPool = {}
+local function fxPart()
+    local p = table.remove(fxPool)
+    if not p then
+        p = Instance.new("Part")
+        p.Anchored = true
+        p.CanCollide = false
+        p.CanQuery = false
+        p.CanTouch = false
+        p.CastShadow = false
+        p.Material = Enum.Material.Neon
+    end
+    p.Parent = fxWorld
+    p.Transparency = 0
+    p.Shape = Enum.PartType.Block
+    return p
+end
+local function fxAdd(part, life, style)
+    fxLive[#fxLive+1] = {part=part, born=tick(), life=life, style=style}
+    if #fxLive > 60 then
+        local oldest = table.remove(fxLive, 1)
+        if oldest.part then oldest.part.Parent = nil; fxPool[#fxPool+1] = oldest.part end
+    end
+end
+local function fxBeam(a, b, thick, color, life)
+    local delta = b-a
+    local len = delta.Magnitude
+    if len < 0.05 then return end
+    local p = fxPart()
+    p.Size = Vector3.new(thick, thick, len)
+    p.CFrame = CFrame.lookAt(a+delta*0.5, b)
+    p.Color = color
+    fxAdd(p, life, "fade")
+end
+local function fxRing(at, radius, color, life)
+    local p = fxPart()
+    p.Shape = Enum.PartType.Cylinder
+    p.Size = Vector3.new(0.2, radius*2, radius*2)
+    p.CFrame = CFrame.new(at)*CFrame.Angles(0,0,math.rad(90))
+    p.Color = color
+    fxAdd(p, life, "ring")
+end
+local function fxSphere(at, radius, color, life)
+    local p = fxPart()
+    p.Shape = Enum.PartType.Ball
+    p.Size = Vector3.new(radius,radius,radius)
+    p.CFrame = CFrame.new(at)
+    p.Color = color
+    local l = Instance.new("PointLight", p)
+    l.Color = color; l.Range = math.clamp(radius*7,10,60); l.Brightness = 6
+    fxAdd(p, life, "burst")
+end
+local function fxColumn(at, height, radius, color, life)
+    local p = fxPart()
+    p.Shape = Enum.PartType.Cylinder
+    p.Size = Vector3.new(height, radius*2, radius*2)
+    p.CFrame = CFrame.new(at+Vector3.new(0,height*0.5,0))*CFrame.Angles(0,0,math.rad(90))
+    p.Color = color
+    fxAdd(p, life, "column")
+end
+local function fxShards(at, n, color, life)
+    for _=1,n do
+        local p = fxPart()
+        p.Size = Vector3.new(0.12,0.12,math.random(6,16)/10)
+        local dir = Vector3.new(math.random()-0.5, math.random()*0.8, math.random()-0.5)
+        if dir.Magnitude<0.01 then dir=Vector3.new(0,1,0) end
+        dir = dir.Unit
+        p.CFrame = CFrame.lookAt(at, at+dir)
+        p.Color = color
+        fxAdd(p, life, "shard")
+        -- store motion
+        fxLive[#fxLive].dir = dir
+        fxLive[#fxLive].origin = at
+        fxLive[#fxLive].speed = math.random(14,30)
+    end
+end
+
+local function stepFx()
+    local now = tick()
+    for i=#fxLive,1,-1 do
+        local e = fxLive[i]
+        local age = (now-e.born)/math.max(e.life,0.05)
+        if age>=1 or not e.part.Parent then
+            if e.part then
+                e.part.Parent = nil
+                if #fxPool<80 then fxPool[#fxPool+1] = e.part end
+            end
+            fxLive[i]=nil
+        else
+            local p = e.part
+            if e.style=="ring" then
+                local grow = e.part.Size.Y*(1+age*0.02)
+                p.Size = Vector3.new(0.2, grow, grow)
+                p.Transparency = age
+            elseif e.style=="burst" then
+                local grow = p.Size.Y*(1+age*0.03)
+                p.Size = Vector3.new(grow,grow,grow)
+                p.Transparency = 0.25+age*0.75
+                local l = p:FindFirstChildOfClass("PointLight")
+                if l then l.Brightness = 6*(1-age)*(1-age) end
+            elseif e.style=="column" then
+                p.Transparency = age
+            elseif e.style=="shard" then
+                local travel = e.speed*(now-e.born)
+                local drop = Vector3.new(0, -18*(now-e.born)^2, 0)
+                p.CFrame = CFrame.lookAt(e.origin+e.dir*travel+drop,
+                    e.origin+e.dir*(travel+1))
+                p.Transparency = age
+            else
+                p.Transparency = age
+            end
+        end
+    end
+end
+
+-- public API for other modules
+function X.vsTracer(from, to)
+    if not o.tracer_enabled then return end
+    spawnTracer(from, to, o.tracer_life)
+end
+function X.vsHitMarker(worldPos)
+    if not o.hit_enabled then return end
+    pushMarker(worldPos, "hit")
+end
+function X.vsKillMarker(worldPos)
+    if not o.kill_enabled then return end
+    pushMarker(worldPos, "kill")
+    local c = col(o.kill_color)
+    fxSphere(worldPos, o.kill_scale*0.52, c, o.kill_life*0.8)
+    if o.kill_ring then
+        fxRing(worldPos-Vector3.new(0,1.6,0), o.kill_scale*0.75, c, o.kill_life*1.7)
+        fxRing(worldPos-Vector3.new(0,1.58,0), o.kill_scale*1.2, c, o.kill_life*2.2)
+    end
+    if o.kill_shards then fxShards(worldPos, math.clamp(o.kill_shards_n,4,32), c, o.kill_life*1.7) end
+    if o.kill_pillar then fxColumn(worldPos-Vector3.new(0,1.8,0), o.kill_pillar_h, math.clamp(o.kill_scale*0.46,1.1,10), c, o.kill_life*1.8) end
+    if o.kill_shake and X.shakeCamera then pcall(X.shakeCamera, "Explosion") end
+end
+function X.vsHitFx(worldPos)
+    if not o.kill_enabled then return end
+    local c = col(o.kill_color)
+    fxSphere(worldPos, o.kill_scale*0.35, c, o.kill_life*0.7)
+    if o.kill_ring then fxRing(worldPos, o.kill_scale*0.6, c, o.kill_life*1.4) end
+end
+
+function X.vsStepEffects()
+    stepTracers()
+    stepMarkers()
+    stepNumbers()
+    stepFx()
+    linePoolFlush()
+end
+
+-- Visuals tab section for effects
+X.vsTabBuilders = X.vsTabBuilders or {}
+local prevBuilder = X.vsTabBuilders["Visuals"]
+X.vsTabBuilders["Visuals"] = function(parent)
+    if prevBuilder then prevBuilder(parent) end
+    local order = 100
+    local function nextOrder() order=order+1 return order end
+
+    local function section(title)
+        local h = mk("Frame",parent,{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,LayoutOrder=nextOrder()})
+        mk("TextLabel",h,{Size=UDim2.new(1,-8,1,0),Position=UDim2.fromOffset(4,0),
+            BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=12,
+            TextColor3=col("orange"),TextXAlignment=Enum.TextXAlignment.Left,
+            Text=string.upper(title)})
+        return h
+    end
+    local function boolRow(key, text)
+        local r = X.vsRow(parent, nextOrder(), key)
+        X.vsLabel(r, text)
+        X.vsCheckbox(r, key)
+    end
+    local function numRow(key, text, minV, maxV, step, unit)
+        local r = X.vsRow(parent, nextOrder(), key)
+        X.vsLabel(r, text)
+        X.vsSlider(r, key, minV, maxV, step, 0, unit)
+    end
+    local function listRow(key, text, options)
+        local r = X.vsRow(parent, nextOrder(), key)
+        X.vsLabel(r, text)
+        X.vsDropdown(r, key, options)
+    end
+
+    section("Tracers")
+    boolRow("tracer_enabled", "Enable tracers")
+    listRow("tracer_style", "Style", {"Classic","Dual core","Pulse","Neon"})
+    listRow("tracer_color", "Color", {"green","cyan","yellow","red","orange","pink","magenta","blue","white"})
+    numRow("tracer_thick", "Thickness (px)", 1, 6, 1, "px")
+    numRow("tracer_life", "Lifetime", 0.05, 1.5, 0.05, "s")
+    numRow("tracer_glow", "Glow size", 1, 6, 0.25, "x")
+
+    section("Hit feedback")
+    boolRow("hit_enabled", "Hit markers")
+    listRow("hit_color", "Color", {"cyan","yellow","red","orange","white","green"})
+    listRow("hit_anim", "Animation", {"Fade","Expand","Contract","Pop"})
+    numRow("hit_size", "Marker size", 5, 20, 1, "px")
+    numRow("hit_life", "Lifetime", 0.05, 0.5, 0.01, "s")
+
+    section("Damage numbers")
+    boolRow("damage_num", "Show damage")
+    listRow("damage_num_color", "Color", {"yellow","white","orange","red","cyan"})
+    numRow("damage_num_life", "Lifetime", 0.3, 2, 0.1, "s")
+
+    section("Kill FX")
+    boolRow("kill_enabled", "World effects")
+    listRow("kill_color", "Color", {"orange","red","cyan","purple","green","yellow"})
+    numRow("kill_scale", "Scale", 1, 20, 0.5, "x")
+    numRow("kill_life", "Lifetime", 0.1, 2, 0.05, "s")
+    boolRow("kill_ring", "Shockwave ring")
+    boolRow("kill_pillar", "Kill pillar")
+    numRow("kill_pillar_h", "Pillar height", 250, 2000, 50, "st")
+    boolRow("kill_shards", "Shards")
+    numRow("kill_shards_n", "Shard count", 2, 32, 1, "")
+    boolRow("kill_shake", "Camera shake")
+end
+X.vsLog("part 4 loaded (tracers + hit markers + kill fx)")
+-- Lua | Visuals/Radar.lua | radar + arrows + boot
+
+local cl = X.vsPalette
+local mk = X.vsMk
+local o = X.vsOpt
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+
+-- defaults
+local d = {
+    radar_enabled=false, radar_size=200, radar_range=140,
+    radar_alpha=0.2, radar_dot=7, radar_ally=false, radar_cone=false,
+    radar_self=true,
+    arrow_enabled=false, arrow_size=38, arrow_half_angle=30,
+}
+for k,v in pairs(d) do if o[k]==nil then o[k]=v end end
+
+local palette = {
+    red=Color3.fromRGB(230,60,60), orange=Color3.fromRGB(240,140,60),
+    yellow=Color3.fromRGB(255,215,80), pink=Color3.fromRGB(255,120,200),
+    cyan=Color3.fromRGB(80,220,240), green=Color3.fromRGB(90,220,120),
+    blue=Color3.fromRGB(90,150,240), white=Color3.fromRGB(255,255,255),
+    lime=Color3.fromRGB(180,255,80),
+}
+local function col(n) return palette[n] or palette.white end
+
+-- layer
+local layer = mk("Frame",X.vsScreen,{
+    Size=UDim2.fromScale(1,1), BackgroundTransparency=1, ZIndex=8,
+})
+X.vsArrowLayer = layer
+
+-- radar frame
+local radar = mk("Frame",X.vsScreen,{
+    Size=UDim2.fromOffset(o.radar_size, o.radar_size),
+    Position=UDim2.new(1,-o.radar_size-24,0,64),
+    BackgroundColor3=cl.bg,
+    BackgroundTransparency=0.2,
+    BorderSizePixel=0,
+    Visible=false,
+    ZIndex=9,
+    ClipsDescendants=true,
+    Active=true,
+})
+X.vsGlass(radar,12)
+X.vsRadar = radar
+
+-- crosshair
+for _,sz in ipairs({UDim2.new(1,-16,0,1), UDim2.new(0,1,1,-16)}) do
+    mk("Frame",radar,{
+        Size=sz, Position=UDim2.fromScale(0.5,0.5),
+        AnchorPoint=Vector2.new(0.5,0.5), BackgroundColor3=cl.ln,
+        BackgroundTransparency=0.5, BorderSizePixel=0,
+    })
+end
+
+-- ring
+local ring = mk("Frame",radar,{
+    Size=UDim2.fromScale(0.5,0.5),
+    Position=UDim2.fromScale(0.5,0.5),
+    AnchorPoint=Vector2.new(0.5,0.5),
+    BackgroundTransparency=1,
+})
+mk("UICorner",ring,{CornerRadius=UDim.new(1,0)})
+mk("UIStroke",ring,{Color=cl.ln,Transparency=0.5,Thickness=1})
+
+-- self dot
+local selfDot = mk("Frame",radar,{
+    Size=UDim2.fromOffset(5,5),
+    Position=UDim2.fromScale(0.5,0.5),
+    AnchorPoint=Vector2.new(0.5,0.5),
+    BackgroundColor3=palette.white,
+    BorderSizePixel=0,
+    ZIndex=11,
+})
+mk("UICorner",selfDot,{CornerRadius=UDim.new(1,0)})
+
+-- cone lines
+local coneLines = {}
+for i=1,2 do
+    coneLines[i] = mk("Frame",radar,{
+        AnchorPoint=Vector2.new(0.5,0.5),
+        BackgroundColor3=palette.white,
+        BackgroundTransparency=0.5,
+        BorderSizePixel=0,
+        ZIndex=10,
+        Size=UDim2.fromOffset(60,1),
+    })
+end
+
+-- dots pool
+local dots = {}
+local function getDot(player)
+    local d = dots[player]
+    if d and d.Parent then return d end
+    d = mk("Frame",radar,{
+        Size=UDim2.fromOffset(o.radar_dot, o.radar_dot),
+        AnchorPoint=Vector2.new(0.5,0.5),
+        BackgroundColor3=palette.red,
+        BorderSizePixel=0,
+        ZIndex=11,
+    })
+    mk("UIStroke",d,{Color=Color3.new(0,0,0),Transparency=0.35,Thickness=1})
+    dots[player]=d
+    return d
+end
+
+-- arrows pool
+local arrows = {}
+local function getArrow(player)
+    local a = arrows[player]
+    if a and a.Parent then return a end
+    a = mk("TextLabel",layer,{
+        Size=UDim2.fromOffset(o.arrow_size,o.arrow_size),
+        AnchorPoint=Vector2.new(0.5,0.5),
+        BackgroundTransparency=1,
+        Font=Enum.Font.GothamBold,
+        TextSize=31,
+        Text="^",
+        TextStrokeTransparency=0.2,
+        TextColor3=palette.red,
+        ZIndex=12,
+    })
+    arrows[player]=a
+    return a
+end
+
+local function project(pos)
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local p, on = cam:WorldToViewportPoint(pos)
+    return Vector2.new(p.X, p.Y), on and p.Z>0, p.Z
+end
+
+local function isEnemy(pl)
+    local mine = LP:GetAttribute("Team")
+    if mine and pl:GetAttribute("Team") == mine then return false end
+    return true
+end
+
+local function stepRadar()
+    -- visibility
+    radar.Visible = o.radar_enabled
+    if not o.radar_enabled then
+        for _,d in pairs(dots) do d.Visible=false end
+        return
+    end
+    radar.Size = UDim2.fromOffset(o.radar_size, o.radar_size)
+    radar.BackgroundTransparency = o.radar_alpha
+
+    local cam = workspace.CurrentCamera
+    local me = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    if not cam or not me then
+        for _,d in pairs(dots) do d.Visible=false end
+        return
+    end
+
+    local origin = me.Position
+    local look = cam.CFrame.LookVector
+    local forward = Vector3.new(look.X, 0, look.Z)
+    if forward.Magnitude<0.001 then forward=Vector3.new(0,0,-1) end
+    forward = forward.Unit
+    local right = Vector3.new(-forward.Z, 0, forward.X)
+
+    local box = radar.AbsoluteSize
+    local cx, cy = box.X*0.5, box.Y*0.5
+    local half = math.max(math.min(cx,cy)-9, 10)
+    local range = math.max(o.radar_range, 20)
+
+    -- radar cone
+    if o.radar_cone then
+        for _,line in ipairs(coneLines) do line.Visible=true end
+        local halfFov = math.rad(math.clamp(cam.FieldOfView,20,120)*0.5)
+        for i,line in ipairs(coneLines) do
+            local angle = (i==1 and -halfFov or halfFov)
+            local dx, dy = math.sin(angle), -math.cos(angle)
+            line.Size = UDim2.fromOffset(half, 1)
+            line.Position = UDim2.fromOffset(cx+dx*half*0.5, cy+dy*half*0.5)
+            line.Rotation = math.deg(math.atan2(dy, dx))
+        end
+    else
+        for _,line in ipairs(coneLines) do line.Visible=false end
+    end
+
+    selfDot.Visible = o.radar_self
+
+    -- dots
+    local drawn = {}
+    for _,p in ipairs(Players:GetPlayers()) do
+        local enemy = isEnemy(p)
+        local show = p~=LP and (enemy or o.radar_ally)
+        if show then
+            local ch = p.Character
+            local rt = ch and ch:FindFirstChild("HumanoidRootPart")
+            local h = ch and ch:FindFirstChildOfClass("Humanoid")
+            if rt and h and h.Health>0 then
+                local rel = rt.Position - origin
+                local px = rel:Dot(right)/range*half
+                local py = -rel:Dot(forward)/range*half
+                local dist = math.sqrt(px*px+py*py)
+                local clipped = dist>half
+                if clipped and dist>0 then
+                    px,py = px*half/dist, py*half/dist
+                end
+                local d = getDot(p)
+                d.Position = UDim2.fromOffset(cx+px, cy+py)
+                d.BackgroundColor3 = enemy and col(o.esp_enemy_col) or col(o.esp_ally_col)
+                local sz = math.max(o.radar_dot,3)
+                d.Size = clipped and UDim2.fromOffset(sz-3,sz-3) or UDim2.fromOffset(sz,sz)
+                local height = rel.Y
+                d.BackgroundTransparency = (height>6 and 0.3) or (height<-6 and 0.5) or 0
+                d.Visible = true
+                drawn[p]=true
+            end
+        end
+    end
+    for p,d in pairs(dots) do
+        if not drawn[p] then d.Visible=false end
+    end
+end
+
+local function stepArrows()
+    -- cleanup
+    if not o.arrow_enabled then
+        for _,a in pairs(arrows) do a.Visible=false end
+        return
+    end
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local vp = cam.ViewportSize
+    local center = Vector2.new(vp.X*0.5, vp.Y*0.5)
+
+    -- radius from fov
+    local halfAngle = math.clamp(o.arrow_half_angle, 1, 89)
+    local radius = math.tan(math.rad(halfAngle)) /
+        math.tan(math.rad(cam.FieldOfView*0.5)) * (vp.Y*0.5)
+    radius = math.clamp(radius, 20, math.max(vp.X,vp.Y))
+
+    local drawn = {}
+    for _,p in ipairs(Players:GetPlayers()) do
+        if p~=LP and isEnemy(p) then
+            local ch = p.Character
+            local rt = ch and ch:FindFirstChild("HumanoidRootPart")
+            local h = ch and ch:FindFirstChildOfClass("Humanoid")
+            if rt and h and h.Health>0 then
+                local pos = rt.Position
+                local delta = pos - cam.CFrame.Position
+                local depth = delta:Dot(cam.CFrame.LookVector)
+                local angle = math.acos(math.clamp(
+                    delta.Unit:Dot(cam.CFrame.LookVector),-1,1))
+                -- if in viewport and within fov, skip arrow
+                if not (depth>0 and angle<=math.rad(halfAngle)) then
+                    local screen, _, z = project(pos)
+                    local off
+                    if screen and z>0 then
+                        off = screen - center
+                    else
+                        local lc = cam.CFrame:PointToObjectSpace(pos)
+                        off = Vector2.new(lc.X, -lc.Y)
+                        if lc.Z>0 then off = -off end
+                    end
+                    local mag = off.Magnitude
+                    if mag<0.5 then
+                        off = Vector2.new(0,1); mag=1
+                    end
+                    local dir = off/mag
+                    local at = center + dir*radius
+                    local a = getArrow(p)
+                    a.Size = UDim2.fromOffset(o.arrow_size, o.arrow_size)
+                    a.TextSize = math.floor(o.arrow_size*0.82)
+                    a.Position = UDim2.fromOffset(at.X, at.Y)
+                    a.Rotation = math.deg(math.atan2(dir.Y, dir.X))+90
+                    a.TextColor3 = col(o.esp_enemy_col)
+                    a.Visible = true
+                    drawn[p]=true
+                end
+            end
+        end
+    end
+    for p,a in pairs(arrows) do
+        if not drawn[p] then a.Visible=false end
+    end
+end
+
+-- Visuals tab section for radar + arrows
+local prevBuilder = X.vsTabBuilders["Visuals"]
+X.vsTabBuilders["Visuals"] = function(parent)
+    if prevBuilder then prevBuilder(parent) end
+    local order = 200
+    local function nextOrder() order=order+1 return order end
+
+    local function section(title)
+        local h = mk("Frame",parent,{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,LayoutOrder=nextOrder()})
+        mk("TextLabel",h,{Size=UDim2.new(1,-8,1,0),Position=UDim2.fromOffset(4,0),
+            BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=12,
+            TextColor3=col("cyan"),TextXAlignment=Enum.TextXAlignment.Left,
+            Text=string.upper(title)})
+        return h
+    end
+    local function boolRow(key, text)
+        local r = X.vsRow(parent, nextOrder(), key)
+        X.vsLabel(r, text)
+        X.vsCheckbox(r, key)
+    end
+    local function numRow(key, text, minV, maxV, step, unit)
+        local r = X.vsRow(parent, nextOrder(), key)
+        X.vsLabel(r, text)
+        X.vsSlider(r, key, minV, maxV, step, 0, unit)
+    end
+
+    section("Radar")
+    boolRow("radar_enabled", "Enable radar")
+    numRow("radar_size", "Size (px)", 140, 260, 5, "px")
+    numRow("radar_range", "Range (studs)", 40, 400, 5, "st")
+    numRow("radar_dot", "Dot size", 3, 12, 1, "px")
+    numRow("radar_alpha", "Background", 0, 1, 0.02, "")
+    boolRow("radar_ally", "Show allies")
+    boolRow("radar_cone", "Show view cone")
+    boolRow("radar_self", "Show self dot")
+
+    section("Offscreen arrows")
+    boolRow("arrow_enabled", "Enable arrows")
+    numRow("arrow_size", "Size (px)", 24, 72, 1, "px")
+    numRow("arrow_half_angle", "FOV half-angle", 1, 89, 1, "°")
+end
+
+-- Main visual step
+function X.vsStepAll()
+    if X.vsStepEsp then pcall(X.vsStepEsp) end
+    if X.vsStepEffects then pcall(X.vsStepEffects) end
+    stepRadar()
+    stepArrows()
+end
+
+-- Bind loop
+local RS = game:GetService("RunService")
+X.vsRenderConn = RS.RenderStepped:Connect(function(dt)
+    if not X.vsScreen or not X.vsScreen.Parent then return end
+    pcall(X.vsStepAll)
+end)
+
+-- Menu toggle: RightShift
+local UIS = game:GetService("UserInputService")
+UIS.InputBegan:Connect(function(inp, gp)
+    if gp then return end
+    if inp.KeyCode==Enum.KeyCode.RightShift then
+        X.vsWindow.Visible = not X.vsWindow.Visible
+    end
+end)
+
+-- Boot
+X.vsBuildTabs({"Aimbot","Visuals","World","Movement","Config"})
+X.vsTabBuilders["Aimbot"] = function(parent)
+    local r = X.vsRow(parent,1,"placeholder")
+    X.vsLabel(r,"Aimbot tab — use existing 3.5 or add here")
+end
+X.vsTabBuilders["World"] = function(parent)
+    local r = X.vsRow(parent,1,"placeholder")
+    X.vsLabel(r,"World tab — bomb, nades, entities")
+end
+X.vsTabBuilders["Movement"] = function(parent)
+    local r = X.vsRow(parent,1,"placeholder")
+    X.vsLabel(r,"Movement tab — fly, speed, noclip, bhop")
+end
+X.vsTabBuilders["Config"] = function(parent)
+    local r = X.vsRow(parent,1,"placeholder")
+    X.vsLabel(r,"Config tab — save/load, binds")
+end
+X.vsOpenTab("Visuals")
+
+X.vsLog("part 5 loaded (radar + arrows + boot)")
+X.vsLog("Mario Visuals ready. RightShift to toggle window.")
