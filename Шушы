@@ -1,0 +1,1853 @@
+-- Lua | MarioVisuals/01_Esp_Core.lua | ESP layer, entries, bounds, box, chams
+
+MV = MV or {}
+MV.Options = MV.Options or {}
+MV.State = MV.State or { Connections = {}, EspEntries = {}, ChamsOrig = {} }
+
+local O = MV.Options
+local State = MV.State
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local RunService = game:GetService("RunService")
+
+MV.Palette = MV.Palette or {
+    red=Color3.fromRGB(230,60,60), orange=Color3.fromRGB(240,140,60),
+    yellow=Color3.fromRGB(255,215,80), pink=Color3.fromRGB(255,120,200),
+    magenta=Color3.fromRGB(255,60,220), cyan=Color3.fromRGB(80,220,240),
+    green=Color3.fromRGB(90,220,120), blue=Color3.fromRGB(90,150,240),
+    white=Color3.fromRGB(255,255,255), gray=Color3.fromRGB(160,160,170),
+    lime=Color3.fromRGB(180,255,80), purple=Color3.fromRGB(180,90,240),
+    teal=Color3.fromRGB(55,220,190), gold=Color3.fromRGB(255,190,55),
+    ice=Color3.fromRGB(165,225,255), black=Color3.fromRGB(10,10,12),
+}
+function MV.col(n) return MV.Palette[n] or MV.Palette.white end
+
+function MV.Mk(class, parent, props)
+    local it = Instance.new(class)
+    for k,v in pairs(props or {}) do it[k] = v end
+    if parent then it.Parent = parent end
+    return it
+end
+
+-- ============================================================
+-- layer / host
+-- ============================================================
+
+local host = nil
+pcall(function() host = gethui() end)
+if not host then host = game:GetService("CoreGui") end
+
+local screen = MV.Mk("ScreenGui", host, {
+    Name = "MarioVisualsEsp",
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+    DisplayOrder = 1001,
+})
+State.EspScreen = screen
+
+local layer = MV.Mk("Frame", screen, {
+    Size = UDim2.fromScale(1,1),
+    BackgroundTransparency = 1,
+    ZIndex = 2,
+})
+State.EspLayer = layer
+
+local chamsHost = MV.Mk("Folder", workspace, { Name = "MarioVisualsChams" })
+State.ChamsHost = chamsHost
+
+-- ============================================================
+-- options
+-- ============================================================
+
+local D = {
+    Esp = false, EspTeam = false, EspMax = 400,
+    EspBox = false, EspBoxStyle = "corner", EspBoxThick = 1,
+    EspBoxScale = 1.16, EspBoxCorner = 0.3, EspBoxFill = 1,
+    EspBoxFade = true,
+    EspChams = false, EspChamsDepth = true,
+    EspChamsFill = 0.8, EspChamsOut = 0.04,
+    EspChamsEnemyCol = "red", EspChamsAllyCol = "cyan",
+    EspChamsInvulCol = "purple",
+    EspName = false, EspDist = false, EspHealth = false, EspHealthNum = false,
+    EspChip = false, EspWeapon = false, EspShots = false, EspFlags = false,
+    EspTextSize = 12,
+    EspHead = false, EspSnap = false,
+    EspSkel = false, EspSkelVis = false, EspSkelThick = 1.5,
+    EspTarget = false,
+    EspEnemyCol = "red", EspAllyCol = "cyan", EspTargetCol = "yellow",
+    EspNameCol = "white", EspDetailCol = "white", EspInvulCol = "purple",
+    EspRgb = false, EspRgbForce = false,
+}
+for k,v in pairs(D) do if O[k]==nil then O[k]=v end end
+
+-- ============================================================
+-- decode + helpers
+-- ============================================================
+
+local HttpService = game:GetService("HttpService")
+local decoded = {}
+function MV.Decode(raw)
+    if type(raw) ~= "string" then return nil end
+    if decoded[raw] == nil then
+        local ok, val = pcall(HttpService.JSONDecode, HttpService, raw)
+        decoded[raw] = ok and val or false
+    end
+    return decoded[raw] or nil
+end
+
+function MV.IsEnemy(pl)
+    local mine = LP:GetAttribute("Team")
+    if mine and pl:GetAttribute("Team") == mine then return false end
+    return true
+end
+
+function MV.IsInvul(model, pl)
+    if model and model:GetAttribute("Invincible")==true then return true end
+    if pl and pl:GetAttribute("Invincible")==true then return true end
+    return false
+end
+
+local function project(pos)
+    local cam = workspace.CurrentCamera
+    if not cam then return nil,false,0 end
+    local p, on = cam:WorldToViewportPoint(pos)
+    return Vector2.new(p.X,p.Y), on and p.Z>0, p.Z
+end
+MV.Project = project
+
+-- ============================================================
+-- bounds
+-- ============================================================
+
+local function espBounds(character, root)
+    local cam = workspace.CurrentCamera
+    if not cam then return nil end
+    local head = character:FindFirstChild("Head")
+    if not head then return nil end
+
+    local bottomY = root.Position.Y - math.max(root.Size.Y*1.45, 2.7)
+    for _, name in ipairs({"LeftFoot","RightFoot","LeftLowerLeg","RightLowerLeg"}) do
+        local part = character:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            bottomY = math.min(bottomY, part.Position.Y - part.Size.Y*0.5)
+        end
+    end
+
+    local topWorld = head.Position + Vector3.new(0, head.Size.Y*0.55+0.12, 0)
+    local bottomWorld = Vector3.new(root.Position.X, bottomY, root.Position.Z)
+    local top, _, topZ = project(topWorld)
+    local bottom, _, botZ = project(bottomWorld)
+    if not top or not bottom or topZ<=0.05 or botZ<=0.05 then return nil end
+
+    local topY, bottomY2 = math.min(top.Y,bottom.Y), math.max(top.Y,bottom.Y)
+    local height = bottomY2 - topY
+    if height < 7 then return nil end
+
+    local centerX = (top.X + bottom.X)*0.5
+    local width = height * 0.46
+    local torso = character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+    if torso and torso:IsA("BasePart") then
+        local span = math.max(torso.Size.X*0.68, 0.85)
+        local l, _, lZ = project(torso.Position - cam.CFrame.RightVector*span)
+        local r, _, rZ = project(torso.Position + cam.CFrame.RightVector*span)
+        if l and r and lZ>0 and rZ>0 then
+            width = math.max(width, math.abs(r.X - l.X))
+        end
+    end
+
+    local scale = math.clamp(O.EspBoxScale, 1, 1.5)
+    local pad = height*(scale-1)*0.5
+    topY = topY - pad
+    bottomY2 = bottomY2 + pad
+    height = height * scale
+    width = math.clamp(width*scale, 6, math.max(6, height*0.78))
+
+    local left, right = centerX-width*0.5, centerX+width*0.5
+    local vp = cam.ViewportSize
+    local onScreen = right>=0 and left<=vp.X and bottomY2>=0 and topY<=vp.Y
+    return left, topY, right, bottomY2, onScreen, width, height,
+        centerX, (topY+bottomY2)*0.5
+end
+MV.EspBounds = espBounds
+
+-- ============================================================
+-- entry factory
+-- ============================================================
+
+local function createEntry(player)
+    local box = MV.Mk("Frame", layer, {
+        BackgroundTransparency = 1, BorderSizePixel = 0,
+        Visible = false, ZIndex = 3,
+        AnchorPoint = Vector2.new(0.5,0.5),
+    })
+    local fill = MV.Mk("Frame", box, {
+        Size = UDim2.fromScale(1,1),
+        BackgroundTransparency = 1, BorderSizePixel = 0, ZIndex = 2,
+    })
+    local edges = {}
+    for i=1,8 do
+        edges[i] = MV.Mk("Frame", box, {
+            BackgroundColor3 = MV.col(O.EspEnemyCol),
+            BorderSizePixel = 0, ZIndex = 3,
+        })
+        MV.Mk("UIStroke", edges[i], {
+            Color = Color3.new(0,0,0), Thickness = 1, Transparency = 0.35,
+            ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+        })
+    end
+
+    local bb = MV.Mk("Frame", layer, {
+        Size = UDim2.fromOffset(1,1),
+        BackgroundTransparency = 1, Visible = false,
+        ZIndex = 5, AnchorPoint = Vector2.new(0.5,0.5),
+    })
+    local name = MV.Mk("TextLabel", bb, {
+        AnchorPoint = Vector2.new(0.5,1),
+        Position = UDim2.new(0.5,0,0,-2),
+        Size = UDim2.fromOffset(200,16),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Code, TextSize = O.EspTextSize,
+        TextColor3 = MV.col(O.EspNameCol),
+        TextStrokeTransparency = 0.2, Text = "",
+    })
+    local dist = MV.Mk("TextLabel", bb, {
+        AnchorPoint = Vector2.new(0.5,0),
+        Size = UDim2.fromOffset(200,13),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Code, TextSize = math.max(O.EspTextSize-2,8),
+        TextColor3 = MV.col(O.EspDetailCol),
+        TextStrokeTransparency = 0.2, Text = "",
+    })
+    local chip = MV.Mk("Frame", bb, {
+        Size = UDim2.fromOffset(140,20),
+        Position = UDim2.new(0.5,0,0,-20),
+        BackgroundColor3 = Color3.fromRGB(12,12,16),
+        BackgroundTransparency = 0.5, Visible = false,
+        ZIndex = 4, AnchorPoint = Vector2.new(0.5,1),
+    })
+    MV.Mk("UICorner", chip, { CornerRadius = UDim.new(0,6) })
+
+    local hpBack = MV.Mk("Frame", bb, {
+        Size = UDim2.fromOffset(4,1),
+        AnchorPoint = Vector2.new(1,0), Position = UDim2.fromOffset(-4,0),
+        BackgroundColor3 = Color3.fromRGB(4,4,4),
+        BackgroundTransparency = 0.1, BorderSizePixel = 0,
+        Visible = false, ZIndex = 5,
+    })
+    local hp = MV.Mk("Frame", hpBack, {
+        Size = UDim2.new(0,2,1,0),
+        AnchorPoint = Vector2.new(0.5,1),
+        Position = UDim2.new(0.5,0,1,0),
+        BackgroundColor3 = MV.col("green"),
+        BorderSizePixel = 0,
+    })
+
+    local head = MV.Mk("Frame", layer, {
+        Size = UDim2.fromOffset(6,6),
+        AnchorPoint = Vector2.new(0.5,0.5),
+        BackgroundColor3 = MV.col("white"),
+        BorderSizePixel = 0, Visible = false, ZIndex = 5,
+    })
+    MV.Mk("UICorner", head, { CornerRadius = UDim.new(1,0) })
+
+    local chams = MV.Mk("Highlight", chamsHost, {
+        Name = "MVChams",
+        Enabled = false,
+        DepthMode = O.EspChamsDepth and Enum.HighlightDepthMode.AlwaysOnTop
+            or Enum.HighlightDepthMode.Occluded,
+    })
+
+    return {
+        player = player,
+        character = nil,
+        box = box, fill = fill, edges = edges,
+        bb = bb, name = name, dist = dist, chip = chip,
+        hpBack = hpBack, hp = hp,
+        head = head, snap = nil,
+        bones = {}, bonesVis = {}, chams = chams,
+    }
+end
+State.CreateEntry = createEntry
+
+function MV.DestroyEntry(entry)
+    if not entry then return end
+    for _, obj in ipairs({ entry.box, entry.bb, entry.head, entry.chams }) do
+        if obj then pcall(function() obj:Destroy() end) end
+    end
+    if entry.snap then pcall(function() entry.snap:Destroy() end) end
+    for _, line in ipairs(entry.bones) do
+        pcall(function() line:Destroy() end)
+    end
+    for _, line in ipairs(entry.bonesVis) do
+        pcall(function() line:Destroy() end)
+    end
+end
+
+-- ============================================================
+-- box draw
+-- ============================================================
+
+function MV.DrawBox(entry, cx, cy, width, height, color, fade)
+    local e = entry
+    if not O.EspBox then e.box.Visible = false return end
+    e.box.Visible = true
+    e.box.Position = UDim2.fromOffset(cx, cy)
+    e.box.Size = UDim2.fromOffset(width, height)
+
+    local weight = math.max(math.floor(O.EspBoxThick), 1)
+    local corner = O.EspBoxStyle == "corner"
+    local arm = corner and math.max(width*math.clamp(O.EspBoxCorner,0.05,0.5),4) or 0
+
+    for i, edge in ipairs(e.edges) do
+        edge.BackgroundColor3 = color
+        edge.BackgroundTransparency = fade or 0
+        local horizontal = i <= 4
+        local length = horizontal and ((arm>0) and arm or width)
+            or ((arm>0) and arm or height)
+        if horizontal then
+            edge.Size = UDim2.fromOffset(length, weight)
+            edge.Position = UDim2.fromOffset(
+                (i%2==1) and 0 or (width-length),
+                (i<=2) and 0 or (height-weight))
+        else
+            edge.Size = UDim2.fromOffset(weight, length)
+            edge.Position = UDim2.fromOffset(
+                (i%2==1) and 0 or (width-weight),
+                (i<=6) and 0 or (height-length))
+        end
+    end
+    e.fill.BackgroundColor3 = color
+    e.fill.BackgroundTransparency = math.clamp(O.EspBoxFill, 0, 1)
+    e.fill.Visible = O.EspBoxFill < 1
+end
+
+-- ============================================================
+-- chams
+-- ============================================================
+
+function MV.ApplyChams(entry, enabled, color)
+    local h = entry.chams
+    if not h then return end
+    if not enabled then
+        if h.Enabled then h.Enabled = false end
+        return
+    end
+    if entry.character and h.Adornee ~= entry.character then
+        h.Adornee = entry.character
+    end
+    if h.FillColor ~= color then
+        h.FillColor = color
+        h.OutlineColor = color
+    end
+    h.FillTransparency = math.clamp(O.EspChamsFill, 0, 1)
+    h.OutlineTransparency = math.clamp(O.EspChamsOut, 0, 1)
+    h.DepthMode = O.EspChamsDepth and Enum.HighlightDepthMode.AlwaysOnTop
+        or Enum.HighlightDepthMode.Occluded
+    if not h.Enabled then h.Enabled = true end
+end
+
+function MV.Log(msg)
+    warn("[Mario Visuals] " .. tostring(msg))
+end
+-- Lua | MarioVisuals/02_Esp_Labels.lua | labels, hp, skeleton, snap, head dot
+
+local O = MV.Options
+local State = MV.State
+local layer = State.EspLayer
+local col = MV.col
+local Mk = MV.Mk
+local project = MV.Project
+
+local BONES_R15 = {
+    {"Head","UpperTorso"},{"UpperTorso","LowerTorso"},
+    {"UpperTorso","LeftUpperArm"},{"LeftUpperArm","LeftLowerArm"},{"LeftLowerArm","LeftHand"},
+    {"UpperTorso","RightUpperArm"},{"RightUpperArm","RightLowerArm"},{"RightLowerArm","RightHand"},
+    {"LowerTorso","LeftUpperLeg"},{"LeftUpperLeg","LeftLowerLeg"},{"LeftLowerLeg","LeftFoot"},
+    {"LowerTorso","RightUpperLeg"},{"RightUpperLeg","RightLowerLeg"},{"RightLowerLeg","RightFoot"},
+}
+
+local rayParams = RaycastParams.new()
+rayParams.FilterType = Enum.RaycastFilterType.Exclude
+
+function MV.PartVisible(part, character)
+    local cam = workspace.CurrentCamera
+    if not cam or not part then return false end
+    local origin = cam.CFrame.Position
+    local lp = game:GetService("Players").LocalPlayer
+    rayParams.FilterDescendantsInstances = { lp.Character, character, cam }
+    local hit = workspace:Raycast(origin, part.Position - origin, rayParams)
+    return hit == nil or hit.Instance:IsDescendantOf(character)
+end
+
+-- ============================================================
+-- flags / ammo
+-- ============================================================
+
+function MV.EspFlags(pl, character)
+    local flags = {}
+    local armor = MV.Decode(pl and pl:GetAttribute("Armor"))
+    local bomb  = MV.Decode(pl and pl:GetAttribute("Slot5"))
+    if bomb and bomb.Weapon == "C4" then flags[#flags+1] = "C4" end
+    if pl and pl:GetAttribute("HasDefuseKit") == true then flags[#flags+1] = "Kit" end
+    if armor and type(armor.Type) == "string" and armor.Type:find("Helmet") then
+        flags[#flags+1] = "Helmet"
+    end
+    if pl and pl:GetAttribute("IsSniperScoped") == true then flags[#flags+1] = "Scoped" end
+    if character and character:GetAttribute("Dead") == true then flags[#flags+1] = "Dead" end
+    return #flags > 0 and (" " .. table.concat(flags, " ")) or ""
+end
+
+function MV.ReadAmmo(player, character)
+    local raw = MV.Decode(player and player:GetAttribute("CurrentEquipped"))
+        or MV.Decode(character and character:GetAttribute("CurrentEquipped"))
+    if type(raw) ~= "table" then return nil end
+    local name = raw.DisplayName or raw.Name or raw.Identifier
+    if not name and type(raw.Properties) == "table" then
+        name = raw.Properties.DisplayName or raw.Properties.Name
+    end
+    local ammo = raw.Rounds or raw.Ammo or raw.CurrentAmmo
+    local reserve = raw.Capacity or raw.ReserveAmmo or raw.Reserve
+    return name, ammo, reserve
+end
+
+-- ============================================================
+-- labels
+-- ============================================================
+
+function MV.DrawLabels(entry, enemy, invul, cx, cy, width, height, bottomY)
+    local e = entry
+    local pl = e.player
+    local character = e.character
+    local cam = workspace.CurrentCamera
+    local root = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid then return end
+
+    local nameColor = invul and col(O.EspInvulCol)
+        or (enemy and col(O.EspNameCol) or col(O.EspAllyCol))
+    local detailColor = invul and col(O.EspInvulCol) or col(O.EspDetailCol)
+
+    e.name.Visible = O.EspName
+    e.name.TextSize = O.EspTextSize
+    e.name.TextColor3 = nameColor
+    local nameText = pl.DisplayName or pl.Name
+    if O.EspFlags then nameText = nameText .. MV.EspFlags(pl, character) end
+    e.name.Text = nameText
+    e.chip.Visible = O.EspChip and O.EspName
+    e.chip.Size = UDim2.fromOffset(math.max(width+40, 90), 20)
+
+    e.dist.Visible = O.EspDist or O.EspHealthNum or O.EspWeapon
+    e.dist.Position = UDim2.new(0.5,0,1,-2)
+    e.dist.TextSize = math.max(O.EspTextSize-2,8)
+    e.dist.TextColor3 = detailColor
+    local distance = (root.Position - cam.CFrame.Position).Magnitude
+    local parts = { string.format("%.0fm", distance/3) }
+    if O.EspHealthNum then
+        local hp = tonumber(character:GetAttribute("Health")) or humanoid.Health
+        parts[#parts+1] = string.format("%d hp", math.floor(hp))
+    end
+    if O.EspWeapon then
+        local w, ammo, reserve = MV.ReadAmmo(pl, character)
+        if w then
+            local s = tostring(w)
+            if ammo then
+                s = s .. "  " .. tostring(ammo)
+                if reserve then s = s .. "/" .. tostring(reserve) end
+            end
+            parts[#parts+1] = s
+        end
+    end
+    e.dist.Text = table.concat(parts, "   ")
+
+    e.hpBack.Visible = O.EspHealth
+    if O.EspHealth then
+        e.hpBack.Size = UDim2.fromOffset(4, height)
+        local h = tonumber(character:GetAttribute("Health")) or humanoid.Health or 100
+        local m = tonumber(character:GetAttribute("MaxHealth")) or 100
+        local f = math.clamp(h/m, 0, 1)
+        e.hp.Size = UDim2.new(0, 2, f, 0)
+        e.hp.BackgroundColor3 = Color3.fromRGB(255*(1-f), 255*f, 0)
+    end
+end
+
+-- ============================================================
+-- head dot
+-- ============================================================
+
+function MV.DrawHeadDot(entry, color)
+    local e = entry
+    local character = e.character
+    if not O.EspHead then e.head.Visible = false return end
+    local head = character:FindFirstChild("Head")
+    if not head then e.head.Visible = false return end
+    local p, ok, z = project(head.Position)
+    if p and ok and z > 0 then
+        local size = math.clamp(90/z, 3, 14)
+        e.head.Size = UDim2.fromOffset(size, size)
+        e.head.Position = UDim2.fromOffset(p.X, p.Y)
+        e.head.BackgroundColor3 = color
+        e.head.Visible = true
+    else
+        e.head.Visible = false
+    end
+end
+
+-- ============================================================
+-- snapline
+-- ============================================================
+
+function MV.DrawSnapline(entry, cx, bottomY, color)
+    local e = entry
+    if not O.EspSnap then
+        if e.snap then e.snap.Visible = false end
+        return
+    end
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    local origin = Vector2.new(cam.ViewportSize.X*0.5, cam.ViewportSize.Y)
+    local target = Vector2.new(cx, bottomY)
+    local delta = target - origin
+    if not e.snap then
+        e.snap = Mk("Frame", layer, {
+            BackgroundColor3 = color, BorderSizePixel = 0,
+            AnchorPoint = Vector2.new(0.5,0.5), ZIndex = 3,
+        })
+    end
+    e.snap.Size = UDim2.fromOffset(math.max(delta.Magnitude,1), 1)
+    e.snap.Position = UDim2.fromOffset(
+        (origin.X+target.X)*0.5, (origin.Y+target.Y)*0.5)
+    e.snap.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+    e.snap.BackgroundColor3 = color
+    e.snap.Visible = true
+end
+
+-- ============================================================
+-- skeleton
+-- ============================================================
+
+local function drawBonePair(a, b)
+    local pa, va, za = project(a.Position)
+    local pb, vb, zb = project(b.Position)
+    if not pa or not pb or not va or not vb or za<=0 or zb<=0 then return nil end
+    return pa, pb
+end
+
+function MV.DrawSkeleton(entry, enemy)
+    local e = entry
+    if not O.EspSkel then
+        for _, l in ipairs(e.bones) do l.Visible = false end
+        for _, l in ipairs(e.bonesVis) do l.Visible = false end
+        return
+    end
+    local character = e.character
+    local mainColor = enemy and col(O.EspEnemyCol) or col(O.EspAllyCol)
+    local visColor = col("lime")
+    local used = 0
+    local usedVis = 0
+
+    for _, pair in ipairs(BONES_R15) do
+        local a = character:FindFirstChild(pair[1])
+        local b = character:FindFirstChild(pair[2])
+        if a and b then
+            local pa, pb = drawBonePair(a, b)
+            if pa and pb then
+                used = used + 1
+                local line = e.bones[used]
+                if not line then
+                    line = Mk("Frame", layer, {
+                        BorderSizePixel = 0,
+                        AnchorPoint = Vector2.new(0.5,0.5),
+                        ZIndex = 4,
+                    })
+                    e.bones[used] = line
+                end
+                local delta = pb - pa
+                line.Size = UDim2.fromOffset(
+                    math.max(delta.Magnitude,1), O.EspSkelThick)
+                line.Position = UDim2.fromOffset(
+                    (pa.X+pb.X)*0.5, (pa.Y+pb.Y)*0.5)
+                line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+                line.BackgroundColor3 = mainColor
+                line.Visible = true
+
+                if O.EspSkelVis then
+                    local visible = MV.PartVisible(a, character)
+                        or MV.PartVisible(b, character)
+                    if visible then
+                        usedVis = usedVis + 1
+                        local vline = e.bonesVis[usedVis]
+                        if not vline then
+                            vline = Mk("Frame", layer, {
+                                BorderSizePixel = 0,
+                                AnchorPoint = Vector2.new(0.5,0.5),
+                                ZIndex = 5,
+                            })
+                            e.bonesVis[usedVis] = vline
+                        end
+                        vline.Size = UDim2.fromOffset(
+                            math.max(delta.Magnitude,1), O.EspSkelThick+0.5)
+                        vline.Position = UDim2.fromOffset(
+                            (pa.X+pb.X)*0.5, (pa.Y+pb.Y)*0.5)
+                        vline.Rotation = line.Rotation
+                        vline.BackgroundColor3 = visColor
+                        vline.BackgroundTransparency = 0.2
+                        vline.Visible = true
+                    end
+                end
+            end
+        end
+    end
+    for i = used+1, #e.bones do e.bones[i].Visible = false end
+    for i = usedVis+1, #e.bonesVis do e.bonesVis[i].Visible = false end
+end
+-- Lua | MarioVisuals/03_Esp_Step.lua | главный per-frame loop для ESP
+
+local O = MV.Options
+local State = MV.State
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+
+local function pickColor(player, character, enemy, invul)
+    if O.EspRgbForce and O.EspRgb then
+        local hue = (tick()*0.3) % 1
+        return Color3.fromHSV(hue, 0.9, 1)
+    end
+    if invul then return MV.col(O.EspInvulCol) end
+    if O.EspTarget and State.AimTarget == player then
+        return MV.col(O.EspTargetCol)
+    end
+    if enemy then return MV.col(O.EspEnemyCol) end
+    return MV.col(O.EspAllyCol)
+end
+
+local function drawOne(entry, enemy)
+    local character = entry.character
+    local root = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid or humanoid.Health<=0 then return end
+
+    local invul = MV.IsInvul(character, entry.player)
+
+    local bounds = MV.EspBounds(character, root)
+    if not bounds then
+        entry.box.Visible = false
+        entry.bb.Visible = false
+        entry.head.Visible = false
+        if entry.snap then entry.snap.Visible = false end
+        for _, l in ipairs(entry.bones) do l.Visible = false end
+        for _, l in ipairs(entry.bonesVis) do l.Visible = false end
+        MV.ApplyChams(entry, false)
+        return
+    end
+
+    local left, topY, right, bottomY2, onScreen,
+        width, height, cx, cy = MV.EspBounds(character, root)
+
+    if not onScreen then
+        entry.box.Visible = false
+        entry.bb.Visible = false
+        entry.head.Visible = false
+        if entry.snap then entry.snap.Visible = false end
+        for _, l in ipairs(entry.bones) do l.Visible = false end
+        for _, l in ipairs(entry.bonesVis) do l.Visible = false end
+        MV.ApplyChams(entry, false)
+        return
+    end
+
+    local color = pickColor(entry.player, character, enemy, invul)
+
+    MV.DrawBox(entry, cx, cy, width, height, color, 0)
+
+    entry.bb.Visible = true
+    entry.bb.Position = UDim2.fromOffset(cx, cy)
+    entry.bb.Size = UDim2.fromOffset(width, height)
+
+    MV.DrawLabels(entry, enemy, invul, cx, cy, width, height, bottomY2)
+    MV.DrawHeadDot(entry, color)
+    MV.DrawSnapline(entry, cx, bottomY2, color)
+    MV.DrawSkeleton(entry, enemy)
+    MV.ApplyChams(entry, O.EspChams, color)
+end
+
+function MV.StepEsp()
+    if not O.Esp then
+        for _, e in pairs(State.EspEntries) do
+            e.box.Visible = false
+            e.bb.Visible = false
+            e.head.Visible = false
+            if e.snap then e.snap.Visible = false end
+            for _, l in ipairs(e.bones) do l.Visible = false end
+            for _, l in ipairs(e.bonesVis) do l.Visible = false end
+            MV.ApplyChams(e, false)
+        end
+        return
+    end
+
+    for p, e in pairs(State.EspEntries) do
+        if not p.Parent or not p.Character then
+            MV.DestroyEntry(e)
+            State.EspEntries[p] = nil
+        end
+    end
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LP then
+            local character = player.Character
+            if character then
+                local enemy = MV.IsEnemy(player)
+                if enemy or O.EspTeam then
+                    local e = State.EspEntries[player]
+                    if not e or e.character ~= character then
+                        MV.DestroyEntry(e)
+                        e = State.CreateEntry(player)
+                        State.EspEntries[player] = e
+                    end
+                    e.character = character
+                    local ok, err = pcall(drawOne, e, enemy)
+                    if not ok then warn("[Visuals] draw:", err) end
+                else
+                    local e = State.EspEntries[player]
+                    if e then
+                        e.box.Visible = false
+                        e.bb.Visible = false
+                        e.head.Visible = false
+                        if e.snap then e.snap.Visible = false end
+                        for _, l in ipairs(e.bones) do l.Visible = false end
+                        for _, l in ipairs(e.bonesVis) do l.Visible = false end
+                        MV.ApplyChams(e, false)
+                    end
+                end
+            end
+        end
+    end
+
+    for p, e in pairs(State.EspEntries) do
+        if not p.Parent then
+            MV.DestroyEntry(e)
+            State.EspEntries[p] = nil
+        end
+    end
+end
+
+function MV.SetAimTarget(player)
+    State.AimTarget = player
+end
+-- Lua | MarioVisuals/04_Nades.lua | grenade arc + tracker + impact preview
+
+local O = MV.Options
+local State = MV.State
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local RS = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+
+local D = {
+    NadeArc = false, NadeTrack = false, NadePreview = false,
+    NadePreviewRadius = 25, NadePreviewAngle = 40,
+    NadeFuseOverride = 0, NadeLabel = false, NadeMark = false,
+    NadeArcColor = "lime", NadeAlways = false,
+}
+for k,v in pairs(D) do if O[k]==nil then O[k]=v end end
+
+State.NadePoints = State.NadePoints or {}
+State.NadeTracker = State.NadeTracker or {}
+State.NadeMarks = State.NadeMarks or {}
+
+-- ============================================================
+-- nade spec
+-- ============================================================
+
+local SPEC = {
+    ["Flashbang"] = { fuse=1.7, floor=false, radius=0.35 },
+    ["HE Grenade"] = { fuse=1.6, floor=false, radius=0.35 },
+    ["Smoke Grenade"] = { fuse=1.6, floor=false, radius=0.4 },
+    ["Decoy Grenade"] = { fuse=1.6, floor=false, radius=0.35 },
+    ["Molotov"] = { fuse=nil, floor=true, radius=0.35 },
+    ["Incendiary Grenade"] = { fuse=nil, floor=true, radius=0.35 },
+}
+
+local function nadeMatch(name)
+    if not name then return nil end
+    local lower = string.lower(name)
+    for k, v in pairs(SPEC) do
+        if string.find(lower, string.lower(k), 1, true) then return v, k end
+    end
+    if string.find(lower, "molot", 1, true) or string.find(lower, "incend", 1, true) then
+        return { fuse=nil, floor=true, radius=0.35 }, name
+    end
+    if string.find(lower, "flash", 1, true) then
+        return { fuse=1.7, floor=false, radius=0.35 }, name
+    end
+    return { fuse=1.6, floor=false, radius=0.35 }, name
+end
+
+local function nadeFuse(name)
+    local spec = nadeMatch(name)
+    if not spec then return nil, false end
+    local override = tonumber(O.NadeFuseOverride) or 0
+    local fuse = spec.fuse
+    if override > 0 and not spec.floor then fuse = override end
+    return fuse, spec.floor, spec.radius
+end
+
+-- ============================================================
+-- detect held nade
+-- ============================================================
+
+local function equippedNadeName()
+    local cam = Workspace.CurrentCamera
+    if not cam then return nil end
+    for _, ch in ipairs(cam:GetChildren()) do
+        if ch:IsA("Model") and ch.Name ~= "" and ch.Name ~= "Model" then
+            local lower = string.lower(ch.Name)
+            if lower:find("nade") or lower:find("grenade") or lower:find("flash")
+                or lower:find("smoke") or lower:find("molot")
+                or lower:find("incend") or lower:find("decoy") or lower:find("frag") then
+                return ch.Name
+            end
+        end
+    end
+    return nil
+end
+
+-- ============================================================
+-- physics fallback
+-- ============================================================
+
+local function simulate(origin, velocity, name, points, ignore)
+    points = points or {}
+    for i = #points, 1, -1 do points[i] = nil end
+
+    local dt = 1/60
+    local gravity = Vector3.new(0, -Workspace.Gravity, 0)
+    local elasticity = 0.42
+    local sleepVel = 6
+    local fuse, onFloor = nadeFuse(name)
+    local pos, vel = origin, velocity
+    local bounces = 0
+    local stopIndex, stopTime, stopWhy
+    local elapsed = 0
+    points[1] = pos
+
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = ignore or {}
+
+    for _ = 1, 420 do
+        local nextVel = vel + gravity*dt
+        local nextPos = pos + nextVel*dt
+
+        if fuse and elapsed >= fuse then
+            stopIndex = #points
+            stopTime = elapsed
+            stopWhy = "FUSE"
+            break
+        end
+
+        local hit = Workspace:Raycast(pos, nextPos - pos, rayParams)
+        elapsed = elapsed + dt
+
+        if hit then
+            pos = hit.Position + hit.Normal*0.05
+            points[#points+1] = pos
+            local normal = hit.Normal
+            if onFloor and normal.Y > 0.7 then
+                stopIndex = #points
+                stopTime = elapsed
+                stopWhy = "FLOOR"
+                break
+            end
+            vel = (nextVel - 2*nextVel:Dot(normal)*normal)*elasticity
+            bounces = bounces + 1
+            if bounces > 4 then
+                stopWhy = "BOUNCES"
+                break
+            end
+            if vel.Magnitude < sleepVel and not fuse then
+                stopWhy = "REST"
+                break
+            end
+        else
+            pos, vel = nextPos, nextVel
+            points[#points+1] = pos
+        end
+    end
+
+    if not stopIndex then
+        stopIndex = #points
+        stopTime = elapsed
+        stopWhy = stopWhy or "REST"
+    end
+
+    return points, stopIndex, stopTime, stopWhy
+end
+
+-- ============================================================
+-- arc layer + pool
+-- ============================================================
+
+local arcLayer = MV.Mk("Frame", State.EspScreen, {
+    Size = UDim2.fromScale(1,1),
+    BackgroundTransparency = 1,
+    ZIndex = 6,
+})
+State.NadeArcLayer = arcLayer
+State.NadeArcPool = State.NadeArcPool or {}
+
+local function arcLineGet(index)
+    local f = State.NadeArcPool[index]
+    if not f then
+        f = MV.Mk("Frame", arcLayer, {
+            BackgroundColor3 = MV.col(O.NadeArcColor),
+            BorderSizePixel = 0,
+            AnchorPoint = Vector2.new(0.5,0.5),
+            ZIndex = 6,
+        })
+        State.NadeArcPool[index] = f
+    end
+    f.Visible = true
+    return f
+end
+
+local function arcLinePut(f)
+    if f then f.Visible = false end
+end
+
+local function project(pos)
+    return MV.Project(pos)
+end
+
+-- ============================================================
+-- mark
+-- ============================================================
+
+local markRing, markLabel
+local function ensureMark()
+    if not markRing or not markRing.Parent then
+        markRing = MV.Mk("Frame", arcLayer, {
+            Size = UDim2.fromOffset(18,18),
+            AnchorPoint = Vector2.new(0.5,0.5),
+            BackgroundTransparency = 1,
+            Visible = false, ZIndex = 7,
+        })
+        MV.Mk("UICorner", markRing, { CornerRadius = UDim.new(1,0) })
+        MV.Mk("UIStroke", markRing, {
+            Color = MV.col(O.NadeArcColor), Thickness = 2, Transparency = 0.2,
+        })
+    end
+    if not markLabel or not markLabel.Parent then
+        markLabel = MV.Mk("TextLabel", arcLayer, {
+            Size = UDim2.fromOffset(220,14),
+            AnchorPoint = Vector2.new(0.5,0.5),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.Code, TextSize = 11,
+            TextColor3 = MV.col(O.NadeArcColor),
+            TextStrokeTransparency = 0.3,
+            Visible = false, ZIndex = 7,
+        })
+    end
+end
+
+-- ============================================================
+-- impact preview (3D)
+-- ============================================================
+
+local previewFrame, previewViewport, previewWorld, previewCam, previewInfo
+local previewClones = {}
+
+local function clearPreviewClones()
+    for i = #previewClones, 1, -1 do
+        pcall(function() previewClones[i]:Destroy() end)
+        previewClones[i] = nil
+    end
+end
+
+local function ensurePreview()
+    if previewFrame and previewFrame.Parent then return end
+    previewFrame = MV.Mk("Frame", State.EspScreen, {
+        Size = UDim2.fromOffset(236,164),
+        Position = UDim2.new(1, -260, 0, 200),
+        BackgroundColor3 = Color3.fromRGB(18,18,22),
+        BackgroundTransparency = 0.15,
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 8,
+    })
+    MV.Mk("UICorner", previewFrame, { CornerRadius = UDim.new(0,10) })
+    MV.Mk("UIStroke", previewFrame, { Color = MV.col("lime"), Transparency = 0.4 })
+
+    MV.Mk("TextLabel", previewFrame, {
+        Size = UDim2.new(1,0,0,16),
+        BackgroundColor3 = Color3.fromRGB(24,24,30),
+        BackgroundTransparency = 0.4,
+        BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium, TextSize = 11,
+        TextColor3 = MV.col("white"),
+        Text = "Impact preview",
+    })
+
+    previewViewport = MV.Mk("ViewportFrame", previewFrame, {
+        Size = UDim2.new(1,-12,1,-40),
+        Position = UDim2.fromOffset(6, 20),
+        BackgroundColor3 = Color3.fromRGB(2, 10, 5),
+        BackgroundTransparency = 0.1,
+        BorderSizePixel = 0,
+        ZIndex = 6,
+        LightColor = Color3.fromRGB(255,255,255),
+        Ambient = Color3.fromRGB(150,150,150),
+    })
+    previewWorld = MV.Mk("WorldModel", previewViewport, {})
+    previewCam = MV.Mk("Camera", previewViewport, {})
+    previewViewport.CurrentCamera = previewCam
+
+    MV.Mk("Part", previewWorld, {
+        Name = "Dot",
+        Shape = Enum.PartType.Ball,
+        Size = Vector3.new(1.6,1.6,1.6),
+        Anchored = true,
+        CanCollide = false,
+        CanQuery = false,
+        Material = Enum.Material.Neon,
+        Color = Color3.fromRGB(255,140,60),
+    })
+
+    previewInfo = MV.Mk("TextLabel", previewFrame, {
+        Size = UDim2.new(1,-10,0,14),
+        Position = UDim2.new(0,6,1,-16),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Code, TextSize = 10,
+        TextColor3 = MV.col("gray"),
+        TextXAlignment = Enum.TextXAlignment.Center,
+    })
+end
+
+local function buildPreview(point)
+    clearPreviewClones()
+    local params = OverlapParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.MaxParts = 260
+    params.FilterDescendantsInstances = { LP.Character, Workspace.CurrentCamera }
+
+    local radius = math.clamp(O.NadePreviewRadius, 10, 60)
+    local ok, parts = pcall(function()
+        return Workspace:GetPartBoundsInRadius(point, radius, params)
+    end)
+    if not ok or not parts then return end
+
+    local budget = 140
+    for _, part in ipairs(parts) do
+        if budget <= 0 then break end
+        if part:IsA("BasePart") and part.Transparency < 0.9
+            and part.Size.Magnitude < 400 then
+            budget = budget - 1
+            local clone = Instance.new("Part")
+            clone.Anchored = true
+            clone.CanCollide = false
+            clone.CanQuery = false
+            clone.CastShadow = false
+            clone.Size = part.Size
+            clone.CFrame = part.CFrame
+            clone.Color = part.Color
+            clone.Material = part.Material
+            clone.Transparency = part.Transparency
+            clone.Parent = previewWorld
+            previewClones[#previewClones+1] = clone
+        end
+    end
+end
+
+-- ============================================================
+-- arc step
+-- ============================================================
+
+local function stepArc()
+    if not O.NadeArc then
+        for _, f in pairs(State.NadeArcPool) do f.Visible = false end
+        if markRing then markRing.Visible = false end
+        if markLabel then markLabel.Visible = false end
+        if previewFrame then previewFrame.Visible = false end
+        return
+    end
+
+    local nadeName = equippedNadeName()
+    if not nadeName and not O.NadeAlways then
+        for _, f in pairs(State.NadeArcPool) do f.Visible = false end
+        if markRing then markRing.Visible = false end
+        if markLabel then markLabel.Visible = false end
+        if previewFrame then previewFrame.Visible = false end
+        return
+    end
+
+    nadeName = nadeName or "HE Grenade"
+
+    local cam = Workspace.CurrentCamera
+    if not cam then return end
+    local cf = cam.CFrame
+    local origin = cf.Position + cf.LookVector * 2
+    local direction = (cf.LookVector + Vector3.new(0, 0.18, 0)).Unit
+    local velocity = direction * 50
+
+    local points = State.NadePoints
+    local stop, stopTime, stopWhy = simulate(origin, velocity, nadeName,
+        points, { LP.Character, cam })
+
+    -- render arc
+    local used = 0
+    local prevScreen, prevOk = project(points[1])
+    for i = 2, stop do
+        local screen, ok = project(points[i])
+        if prevScreen and screen and prevOk and ok then
+            used = used + 1
+            local line = arcLineGet(used)
+            local delta = screen - prevScreen
+            line.Size = UDim2.fromOffset(math.max(delta.Magnitude,1), 2)
+            line.Position = UDim2.fromOffset(
+                (prevScreen.X+screen.X)*0.5, (prevScreen.Y+screen.Y)*0.5)
+            line.Rotation = math.deg(math.atan2(delta.Y, delta.X))
+            local fade = i / #points
+            line.BackgroundColor3 = MV.col(O.NadeArcColor)
+            line.BackgroundTransparency = 0.15 + fade * 0.35
+        end
+        prevScreen, prevOk = screen, ok
+    end
+    for i = used+1, #State.NadeArcPool do
+        arcLinePut(State.NadeArcPool[i])
+    end
+
+    -- landing mark
+    local landingScreen, landingOk = project(points[stop])
+    if landingScreen and landingOk then
+        ensureMark()
+        markRing.Position = UDim2.fromOffset(landingScreen.X, landingScreen.Y)
+        markRing.Visible = O.NadeMark
+        if O.NadeLabel then
+            markLabel.Text = string.format("%s  %s  %.2fs",
+                string.upper(nadeName), stopWhy or "REST", stopTime or 0)
+            markLabel.Position = UDim2.fromOffset(landingScreen.X, landingScreen.Y + 20)
+            markLabel.Visible = true
+        else
+            markLabel.Visible = false
+        end
+    else
+        if markRing then markRing.Visible = false end
+        if markLabel then markLabel.Visible = false end
+    end
+
+    -- impact preview
+    if O.NadePreview then
+        ensurePreview()
+        previewFrame.Visible = true
+        local dot = previewWorld:FindFirstChild("Dot")
+        if dot then
+            dot.Position = points[stop]
+            dot.Color = (stopWhy == "FLOOR") and Color3.fromRGB(255,140,60)
+                or Color3.fromRGB(255,225,80)
+        end
+        local angle = math.rad(O.NadePreviewAngle)
+        local distance = math.clamp(O.NadePreviewRadius, 10, 60) * 0.85
+        previewCam.CFrame = CFrame.lookAt(
+            points[stop] + Vector3.new(
+                math.sin(angle)*distance,
+                distance*0.6,
+                math.cos(angle)*distance),
+            points[stop])
+        buildPreview(points[stop])
+        previewInfo.Text = string.format("%s  %s  %.2fs",
+            string.upper(nadeName), stopWhy or "REST", stopTime or 0)
+    elseif previewFrame then
+        previewFrame.Visible = false
+    end
+end
+
+-- ============================================================
+-- live nade tracker
+-- ============================================================
+
+local trackLayer = MV.Mk("Frame", State.EspScreen, {
+    Size = UDim2.fromScale(1,1),
+    BackgroundTransparency = 1,
+    ZIndex = 6,
+})
+State.NadeTrackLayer = trackLayer
+State.NadeTrackMarks = {}
+
+local function trackMarkGet(index)
+    local m = State.NadeTrackMarks[index]
+    if m and m.ring.Parent then return m end
+    local ring = MV.Mk("Frame", trackLayer, {
+        Size = UDim2.fromOffset(16,16),
+        AnchorPoint = Vector2.new(0.5,0.5),
+        BackgroundTransparency = 1,
+        Visible = false, ZIndex = 7,
+    })
+    MV.Mk("UICorner", ring, { CornerRadius = UDim.new(1,0) })
+    local edge = MV.Mk("UIStroke", ring, {
+        Color = MV.col("orange"), Thickness = 2,
+    })
+    local label = MV.Mk("TextLabel", trackLayer, {
+        Size = UDim2.fromOffset(200,14),
+        AnchorPoint = Vector2.new(0.5,0.5),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.Code, TextSize = 11,
+        TextColor3 = MV.col("orange"),
+        TextStrokeTransparency = 0.4,
+        Visible = false, ZIndex = 7,
+    })
+    m = { ring = ring, edge = edge, label = label }
+    State.NadeTrackMarks[index] = m
+    return m
+end
+
+local CollectionService = game:GetService("CollectionService")
+
+local function stepTrack()
+    if not O.NadeTrack then
+        for _, m in pairs(State.NadeTrackMarks) do
+            m.ring.Visible = false
+            m.label.Visible = false
+        end
+        return
+    end
+
+    local tagged = CollectionService:GetTagged("Grenade")
+    local shown = 0
+    local now = tick()
+
+    for _, model in ipairs(tagged) do
+        if shown >= 6 then break end
+        if model:IsA("Model") and model.Parent then
+            local part = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+            if part then
+                local record = State.NadeTracker[model]
+                if not record then
+                    record = {
+                        at = now, position = part.Position,
+                        velocity = Vector3.zero, points = {},
+                        name = model:GetAttribute("GrenadeName"),
+                    }
+                    State.NadeTracker[model] = record
+                else
+                    local gap = now - record.at
+                    if gap > 0.005 then
+                        local sampled = (part.Position - record.position) / gap
+                        record.velocity = record.velocity:Lerp(sampled,
+                            (record.velocity.Magnitude < 0.01) and 1 or 0.45)
+                        record.at = now
+                        record.position = part.Position
+                    end
+                end
+
+                local name = record.name or model.Name
+                local pts, stop, stopTime, why = simulate(
+                    part.Position, record.velocity, name, record.points,
+                    { model, LP.Character })
+                record.stop = stop
+                record.time = stopTime
+                record.why = why
+
+                local landing = pts[stop]
+                if landing then
+                    local screen, ok = project(landing)
+                    if screen and ok then
+                        shown = shown + 1
+                        local m = trackMarkGet(shown)
+                        m.ring.Position = UDim2.fromOffset(screen.X, screen.Y)
+                        m.ring.Visible = true
+                        m.edge.Color = (why == "FLOOR")
+                            and Color3.fromRGB(255,140,60)
+                            or Color3.fromRGB(255,225,80)
+                        m.label.Text = string.format("%s  %.1fs",
+                            string.upper(name), stopTime or 0)
+                        m.label.Position = UDim2.fromOffset(screen.X, screen.Y + 18)
+                        m.label.Visible = true
+                    end
+                end
+            end
+        end
+    end
+
+    for i = shown+1, #State.NadeTrackMarks do
+        State.NadeTrackMarks[i].ring.Visible = false
+        State.NadeTrackMarks[i].label.Visible = false
+    end
+
+    for model in pairs(State.NadeTracker) do
+        if not model.Parent then State.NadeTracker[model] = nil end
+    end
+end
+
+-- ============================================================
+-- public step
+-- ============================================================
+
+function MV.StepNades()
+    stepArc()
+    stepTrack()
+end
+-- Lua | MarioVisuals/05_Bombs.lua | bomb ESP + drop ESP + hostages + defuse + timer
+
+local O = MV.Options
+local State = MV.State
+local Players = game:GetService("Players")
+local LP = Players.LocalPlayer
+local Workspace = game:GetService("Workspace")
+local CollectionService = game:GetService("CollectionService")
+local RunService = game:GetService("RunService")
+
+local D = {
+    BombEsp = false, BombDropEsp = false, BombHostages = false,
+    BombTimer = false, BombAutoDefuse = false,
+    BombColor = "orange", BombDefusedColor = "green",
+    BombTimerColor = "cyan", BombText = "orange",
+}
+for k,v in pairs(D) do if O[k]==nil then O[k]=v end end
+
+State.WorldMarks = State.WorldMarks or {}
+State.BombState = State.BombState or nil
+State.AutoDefuse = State.AutoDefuse or {
+    Holding = false, Bomb = nil, PendingUntil = 0, PulseAt = 0,
+}
+
+-- ============================================================
+-- world mark (billboard)
+-- ============================================================
+
+local billboardHost = MV.Mk("BillboardGui", State.EspScreen, {
+    Name = "WorldMarkHost",
+    Size = UDim2.fromOffset(1,1),
+    AlwaysOnTop = true,
+    LightInfluence = 0,
+    Enabled = false,
+})
+State.WorldMarkHost = billboardHost
+
+local function worldMark(instance, text, color, lines)
+    if not instance or not instance.Parent then return end
+    local mark = State.WorldMarks[instance]
+    if not mark or not mark.gui.Parent then
+        local gui = MV.Mk("BillboardGui", State.EspScreen, {
+            Name = "MVWorldMark",
+            Size = UDim2.fromOffset(140,20),
+            StudsOffsetWorldSpace = Vector3.new(0, 1.6, 0),
+            AlwaysOnTop = true,
+            LightInfluence = 0,
+        })
+        local label = MV.Mk("TextLabel", gui, {
+            Size = UDim2.fromScale(1,1),
+            BackgroundTransparency = 1,
+            Font = Enum.Font.Code, TextSize = 11,
+            TextStrokeTransparency = 0.35,
+            TextXAlignment = Enum.TextXAlignment.Center,
+            Text = "",
+        })
+        mark = { gui = gui, label = label }
+        State.WorldMarks[instance] = mark
+    end
+    local part = instance:IsA("BasePart") and instance
+        or (instance:IsA("Model") and (instance.PrimaryPart
+            or instance:FindFirstChildWhichIsA("BasePart")))
+        or (instance.FindFirstChildWhichIsA
+            and instance:FindFirstChildWhichIsA("BasePart"))
+    mark.gui.Adornee = part
+    mark.gui.Enabled = part ~= nil
+    mark.gui.Size = UDim2.fromOffset(180, lines and (lines*13+6) or 20)
+    mark.label.Text = text
+    mark.label.TextColor3 = color
+    mark.label.TextSize = lines and 10 or 11
+    mark.seen = true
+end
+
+local function pruneWorldMarks()
+    for instance, mark in pairs(State.WorldMarks) do
+        if not mark.seen or not instance.Parent then
+            pcall(function() mark.gui:Destroy() end)
+            State.WorldMarks[instance] = nil
+        end
+    end
+end
+
+-- ============================================================
+-- bomb state
+-- ============================================================
+
+local function bombState()
+    local tagged = CollectionService:GetTagged("Bomb")
+    local model = tagged and tagged[1]
+    if not model or not model.Parent then return nil end
+
+    local raw = model:GetAttribute("BombPlanted")
+    local at, fuse
+    if type(raw) == "string" then
+        at = tonumber(string.match(raw, '"Time"%s*:%s*(%-?[%d%.eE+]+)'))
+        fuse = tonumber(string.match(raw, '"TimeUntilExplode"%s*:%s*(%-?[%d%.eE+]+)'))
+    end
+
+    local now = Workspace:GetServerTimeNow()
+    fuse = fuse or 40
+    at = at or now
+    local explodeAt = at + fuse
+    local state = {
+        model = model,
+        fuse = fuse,
+        explodeAt = explodeAt,
+        left = math.max(explodeAt - now, 0),
+        defused = model:GetAttribute("Defused") == true,
+        gone = model:GetAttribute("Exploding") == true
+            or model:GetAttribute("Exploded") == true,
+        reachable = model:GetAttribute("CanDefuse") == true,
+        claimed = model:GetAttribute("IsGettingDefused") == true,
+    }
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player:GetAttribute("IsDefusingBomb") == true then
+            state.defuser = player
+            state.kit = player:GetAttribute("HasDefuseKit") == true
+            state.need = state.kit and 5 or 10
+            local began = tonumber(player:GetAttribute("DefuseStartTime"))
+            if began then
+                state.doneAt = began + state.need
+                state.spent = math.max(now - began, 0)
+                state.progress = math.clamp(state.spent / state.need, 0, 1)
+                state.inTime = state.doneAt <= explodeAt
+            end
+            break
+        end
+    end
+
+    return state
+end
+
+local function clockText(seconds)
+    seconds = math.max(seconds or 0, 0)
+    return string.format("%d:%04.1f", math.floor(seconds/60), seconds % 60)
+end
+
+local function bombCaption(state)
+    local lines = {}
+    local away = ""
+    local cam = Workspace.CurrentCamera
+    local part = state.model.PrimaryPart
+        or state.model:FindFirstChildWhichIsA("BasePart")
+    if cam and part then
+        away = string.format("   %.0fm",
+            (part.Position - cam.CFrame.Position).Magnitude / 3)
+    end
+
+    if state.defused then
+        lines[1] = "C4  DEFUSED" .. away
+    elseif state.gone then
+        lines[1] = "C4  GONE"
+    else
+        lines[1] = "C4  " .. clockText(state.left) .. away
+    end
+
+    if not state.defused and not state.gone then
+        if state.defuser then
+            lines[#lines+1] = (state.defuser.DisplayName or state.defuser.Name)
+                .. (state.kit and "  +kit" or "  no kit")
+            if state.doneAt then
+                lines[#lines+1] = string.format("%.1fs left  %s",
+                    math.max(state.need - state.spent, 0),
+                    state.inTime and "IN TIME" or "TOO LATE")
+            end
+        else
+            lines[#lines+1] = state.claimed and "being defused"
+                or (state.reachable and "nobody defusing" or "no defuser")
+        end
+    end
+
+    return table.concat(lines, "\n"), #lines
+end
+
+-- ============================================================
+-- world ESP (bomb + drops + hostages)
+-- ============================================================
+
+local function looksLikeDrop(instance)
+    if instance:IsA("Tool") then return true end
+    if instance:IsA("BasePart") then
+        local ok, group = pcall(function() return instance.CollisionGroup end)
+        if ok and group == "WeaponDropped" then return true end
+    end
+    if instance:IsA("Model") then
+        local part = instance.PrimaryPart
+            or instance:FindFirstChildWhichIsA("BasePart")
+        if part then
+            local ok, group = pcall(function() return part.CollisionGroup end)
+            if ok and group == "WeaponDropped" then return true end
+        end
+    end
+    local lower = string.lower(instance.Name)
+    return lower:find("dropped", 1, true) ~= nil
+end
+
+local function stepWorldEsp()
+    local drops = O.BombDropEsp
+    local bombOnly = O.BombEsp
+    if not drops and not bombOnly then
+        for instance, mark in pairs(State.WorldMarks) do
+            pcall(function() mark.gui:Destroy() end)
+            State.WorldMarks[instance] = nil
+        end
+        return
+    end
+
+    for _, mark in pairs(State.WorldMarks) do mark.seen = false end
+
+    -- dropped weapons
+    if drops then
+        for _, model in ipairs(CollectionService:GetTagged("WeaponDropped")) do
+            if model.Parent then
+                local named = model:GetAttribute("Weapon")
+                if type(named) ~= "string" or named == "" then
+                    named = model.Name
+                end
+                local isC4 = named == "C4"
+                worldMark(model, named,
+                    isC4 and Color3.fromRGB(255,180,60)
+                        or Color3.fromRGB(200,200,120))
+            end
+        end
+    end
+
+    -- bomb
+    local bomb = (drops or bombOnly) and bombState() or nil
+    State.BombState = bomb
+    if bomb and bomb.model.Parent then
+        local caption, lines = bombCaption(bomb)
+        local colour = Color3.fromRGB(255,120,60)
+        if bomb.defused then
+            colour = Color3.fromRGB(120,230,140)
+        elseif bomb.defuser then
+            colour = (bomb.inTime == false) and Color3.fromRGB(255,90,90)
+                or Color3.fromRGB(90,220,255)
+        elseif bomb.left < 10 then
+            colour = Color3.fromRGB(255,70,70)
+        end
+        worldMark(bomb.model, caption, colour, lines)
+    end
+
+    -- hostages
+    if drops then
+        for _, item in ipairs(CollectionService:GetTagged("Hostage")) do
+            if item.Parent then
+                worldMark(item, "hostage", Color3.fromRGB(120,200,255))
+            end
+        end
+    end
+
+    pruneWorldMarks()
+end
+
+-- ============================================================
+-- defuse panel
+-- ============================================================
+
+local defusePanel, defuseStroke, defuseGrip, defuseAccent,
+      defuseText, defuseTime, defuseBack, defuseFill
+
+local function ensureDefusePanel()
+    if defusePanel and defusePanel.Parent then return end
+    defusePanel = MV.Mk("Frame", State.EspScreen, {
+        Size = UDim2.fromOffset(330,68),
+        Position = UDim2.new(1, -348, 0, 200),
+        BackgroundColor3 = Color3.fromRGB(26,26,32),
+        BackgroundTransparency = 0.12,
+        BorderSizePixel = 0,
+        Visible = false,
+        ZIndex = 9,
+    })
+    MV.Mk("UICorner", defusePanel, { CornerRadius = UDim.new(0,12) })
+    defuseStroke = MV.Mk("UIStroke", defusePanel, {
+        Color = MV.col("cyan"), Thickness = 1, Transparency = 0.38,
+    })
+    defuseGrip = MV.Mk("TextButton", defusePanel, {
+        Size = UDim2.new(1,0,0,27),
+        BackgroundColor3 = Color3.fromRGB(34,34,42),
+        BackgroundTransparency = 0.28,
+        BorderSizePixel = 0,
+        Font = Enum.Font.GothamMedium,
+        TextSize = 12,
+        TextColor3 = MV.col("white"),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Text = "Bomb status",
+        AutoButtonColor = false,
+        ZIndex = 10,
+    })
+    MV.Mk("UICorner", defuseGrip, { CornerRadius = UDim.new(0,12) })
+    MV.Mk("UIPadding", defuseGrip, {
+        PaddingLeft = UDim.new(0,28), PaddingRight = UDim.new(0,12),
+    })
+    defuseAccent = MV.Mk("Frame", defusePanel, {
+        Size = UDim2.fromOffset(7,7),
+        Position = UDim2.fromOffset(12,10),
+        BackgroundColor3 = MV.col("cyan"),
+        BorderSizePixel = 0,
+        ZIndex = 11,
+    })
+    MV.Mk("UICorner", defuseAccent, { CornerRadius = UDim.new(1,0) })
+    defuseText = MV.Mk("TextLabel", defusePanel, {
+        Size = UDim2.new(1,-88,0,20),
+        Position = UDim2.fromOffset(12,31),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamMedium, TextSize = 11,
+        TextColor3 = MV.col("gray"),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ZIndex = 10,
+    })
+    defuseTime = MV.Mk("TextLabel", defusePanel, {
+        Size = UDim2.fromOffset(66,20),
+        Position = UDim2.new(1,-78,0,31),
+        BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold, TextSize = 11,
+        TextColor3 = MV.col("gray"),
+        TextXAlignment = Enum.TextXAlignment.Right,
+        ZIndex = 10,
+    })
+    defuseBack = MV.Mk("Frame", defusePanel, {
+        Size = UDim2.new(1,-24,0,4),
+        Position = UDim2.fromOffset(12,57),
+        BackgroundColor3 = MV.col("black"),
+        BorderSizePixel = 0,
+        ZIndex = 10,
+    })
+    MV.Mk("UICorner", defuseBack, { CornerRadius = UDim.new(1,0) })
+    defuseFill = MV.Mk("Frame", defuseBack, {
+        Size = UDim2.fromScale(0,1),
+        BackgroundColor3 = MV.col("cyan"),
+        BorderSizePixel = 0,
+        ZIndex = 11,
+    })
+    MV.Mk("UICorner", defuseFill, { CornerRadius = UDim.new(1,0) })
+end
+
+local function stepDefusePanel()
+    if not O.BombTimer then
+        if defusePanel then defusePanel.Visible = false end
+        return
+    end
+    local bomb = State.BombState
+    if not bomb or bomb.gone then
+        if defusePanel then defusePanel.Visible = false end
+        return
+    end
+    ensureDefusePanel()
+
+    local title, detail, timeText = "Bomb status", "Waiting", ""
+    local fill, colour = 0, MV.col("cyan")
+
+    if bomb.defused then
+        title = "Bomb defused"
+        detail = "Round secured"
+        timeText = "Complete"
+        fill = 1
+        colour = Color3.fromRGB(120,230,140)
+    elseif bomb.defuser then
+        title = "Defusing · " .. (bomb.defuser.DisplayName or bomb.defuser.Name)
+        detail = bomb.kit and "Defuse kit equipped" or "Without a defuse kit"
+        if bomb.doneAt then
+            timeText = string.format("%.1f s", math.max(bomb.need - bomb.spent, 0))
+            detail = detail .. (bomb.inTime and " · In time" or " · Too late")
+            fill = bomb.progress or 0
+        end
+        colour = (bomb.inTime == false) and MV.col("red") or MV.col("cyan")
+    else
+        title = "Bomb planted"
+        detail = bomb.claimed and "Defuse in progress"
+            or (bomb.reachable and "no defuser" or "out of reach")
+        fill = 1 - math.clamp(bomb.left / math.max(bomb.fuse, 1), 0, 1)
+        if bomb.left < 10 then colour = Color3.fromRGB(255,70,70) end
+    end
+
+    if not bomb.defused and timeText == "" then
+        timeText = string.format("%.1f s", bomb.left)
+    end
+
+    defuseGrip.Text = title
+    defuseText.Text = detail
+    defuseTime.Text = timeText
+    defuseFill.Size = UDim2.fromScale(math.clamp(fill, 0, 1), 1)
+    defuseFill.BackgroundColor3 = colour
+    defuseAccent.BackgroundColor3 = colour
+    defuseStroke.Color = colour
+    defusePanel.Visible = true
+end
+
+-- ============================================================
+-- auto defuse (native input group)
+-- ============================================================
+
+local function inputController()
+    if State.NadeInputController then return State.NadeInputController end
+    local root = ReplicatedStorage:FindFirstChild("Controllers")
+    local mod = root and root:FindFirstChild("InputController")
+    if not mod or not mod:IsA("ModuleScript") then return nil end
+    local ok, ctrl = pcall(require, mod)
+    if ok and type(ctrl) == "table" then
+        State.NadeInputController = ctrl
+        return ctrl
+    end
+    return nil
+end
+
+local function installAutoDefuseHold()
+    local ctrl = inputController()
+    if not ctrl or type(ctrl.isActionActive) ~= "function" then return nil end
+    if not State.AutoDefuseWrapper then
+        local original = ctrl.isActionActive
+        local wrapper
+        wrapper = function(name, ...)
+            if name == "Use" and State.AutoDefuse.Holding then return true end
+            return original(name, ...)
+        end
+        State.AutoDefuseController = ctrl
+        State.AutoDefuseOriginal = original
+        State.AutoDefuseWrapper = wrapper
+        ctrl.isActionActive = wrapper
+    end
+    return State.AutoDefuseUse
+end
+
+local function stopAutoDefuse(cancel)
+    local action = State.AutoDefuseUse
+    if State.AutoDefuse.Holding and cancel and type(action) == "table"
+        and type(action.Callback) == "function" then
+        pcall(action.Callback, Enum.UserInputState.End, {})
+    end
+    State.AutoDefuse.Holding = false
+    State.AutoDefuse.Bomb = nil
+    State.AutoDefuse.PendingUntil = nil
+    State.AutoDefuse.PulseAt = nil
+end
+
+local function startAutoDefuse(bomb)
+    if State.AutoDefuse.Holding then return true end
+    local action = installAutoDefuseHold()
+    if not action then
+        State.AutoDefuse.RetryAt = tick() + 1
+        return false
+    end
+    State.AutoDefuse.Holding = true
+    State.AutoDefuse.Bomb = bomb.model
+    local ok = pcall(action.Callback, Enum.UserInputState.Begin, {})
+    if not ok then
+        State.AutoDefuse.Holding = false
+        State.AutoDefuse.Bomb = nil
+        State.AutoDefuse.RetryAt = tick() + 0.2
+        return false
+    end
+    State.AutoDefuse.PendingUntil = tick() + 0.85
+    State.AutoDefuse.PulseAt = tick() + 0.14
+    return true
+end
+
+local function stepAutoDefuse()
+    if not O.BombAutoDefuse then
+        if State.AutoDefuse.Holding or State.AutoDefuseWrapper then
+            stopAutoDefuse(true)
+        end
+        return
+    end
+
+    local now = tick()
+    if now < (State.AutoDefuse.StepAt or 0) then return end
+    State.AutoDefuse.StepAt = now + 0.04
+
+    local character = LP.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local root = character and (character:FindFirstChild("HumanoidRootPart")
+        or character.PrimaryPart)
+    if not character or not humanoid or not root then stopAutoDefuse(true) return end
+
+    local canRun = Workspace:GetAttribute("Gamemode") == "Bomb Defusal"
+        and LP:GetAttribute("Team") == "Counter-Terrorists"
+        and humanoid.Health > 0
+        and LP:GetAttribute("Dead") ~= true
+    if not canRun then stopAutoDefuse(true) return end
+
+    local bomb = State.BombState
+    if not bomb or bomb.defused or bomb.gone then
+        stopAutoDefuse(false)
+        return
+    end
+    if State.AutoDefuse.Bomb and State.AutoDefuse.Bomb ~= bomb.model then
+        stopAutoDefuse(true)
+        return
+    end
+
+    local localDefusing = LP:GetAttribute("IsLocallyDefusingBomb") == true
+        or LP:GetAttribute("IsDefusingBomb") == true
+    local pending = State.AutoDefuse.Holding
+        and now < (State.AutoDefuse.PendingUntil or 0)
+
+    if localDefusing then
+        State.AutoDefuse.PendingUntil = nil
+        State.AutoDefuse.PulseAt = nil
+        pending = false
+    end
+    if bomb.claimed and not localDefusing and not pending then
+        stopAutoDefuse(true)
+        return
+    end
+
+    if State.AutoDefuse.Holding then
+        if localDefusing then return end
+        if pending then
+            if now >= (State.AutoDefuse.PulseAt or 0)
+                and type(State.AutoDefuseUse) == "table"
+                and type(State.AutoDefuseUse.Callback) == "function" then
+                State.AutoDefuse.PulseAt = now + 0.14
+                pcall(State.AutoDefuseUse.Callback,
+                    Enum.UserInputState.Begin, {})
+            end
+            return
+        end
+        stopAutoDefuse(true)
+        State.AutoDefuse.RetryAt = now + 0.12
+        return
+    end
+
+    if bomb.reachable and not bomb.claimed
+        and now >= (State.AutoDefuse.RetryAt or 0) then
+        startAutoDefuse(bomb)
+    end
+end
+
+-- ============================================================
+-- bomb helpers to allow auto-defuse to find its action module
+-- ============================================================
+
+do
+    local function loadUseAction()
+        if type(State.AutoDefuseUse) == "table"
+            and type(State.AutoDefuseUse.Callback) == "function" then
+            return
+        end
+        local root = ReplicatedStorage:FindFirstChild("Controllers")
+        local input = root and root:FindFirstChild("InputController")
+        local actions = input and input:FindFirstChild("Actions")
+        local use = actions and actions:FindFirstChild("Use")
+        if not use or not use:IsA("ModuleScript") then return end
+        local ok, action = pcall(require, use)
+        if ok and type(action) == "table"
+            and type(action.Callback) == "function" then
+            State.AutoDefuseUse = action
+        end
+    end
+    loadUseAction()
+    -- если не нашли сразу — попробуем на следующем step
+    RunService.Heartbeat:Connect(function()
+        if not State.AutoDefuseUse then loadUseAction() end
+    end)
+end
+
+-- ============================================================
+-- public step
+-- ============================================================
+
+function MV.StepBombs()
+    stepWorldEsp()
+    stepDefusePanel()
+    stepAutoDefuse()
+end
